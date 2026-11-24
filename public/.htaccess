@@ -1,0 +1,22 @@
+# OFKOSSEC — SPA routing for Apache hosts (InfinityFree).
+# Vercel ignores this file; it uses vercel.json instead.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Let real files and directories through untouched.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Everything else is a client-side route -> serve the app shell.
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Never cache the HTML shell, so a new upload shows up immediately.
+<IfModule mod_headers.c>
+  <FilesMatch "index\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
