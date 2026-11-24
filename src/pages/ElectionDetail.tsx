@@ -9,6 +9,7 @@ import {
   Info,
   Lock,
   Loader2,
+  Pencil,
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -27,7 +28,8 @@ import type { Election } from "@/types";
 export default function ElectionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { election, candidates, hasVoted, loading, error, reload } = useElectionDetail(id);
+  const { election, candidates, hasVoted, myCandidateId, loading, error, reload } =
+    useElectionDetail(id);
 
   const session = useAuthStore((state) => state.session);
   const userId = session?.user.id ?? null;
@@ -37,6 +39,9 @@ export default function ElectionDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [castError, setCastError] = useState<string | null>(null);
   const [justVoted, setJustVoted] = useState(false);
+  // The student has pressed "Change my vote" and is picking a replacement.
+  const [editing, setEditing] = useState(false);
+  const [justChanged, setJustChanged] = useState(false);
   const [nextElection, setNextElection] = useState<Election | null>(null);
   const [findingNext, setFindingNext] = useState(false);
   const [skipping, setSkipping] = useState(false);
@@ -53,6 +58,8 @@ export default function ElectionDetail() {
   useEffect(() => {
     setSelectedId(null);
     setJustVoted(false);
+    setEditing(false);
+    setJustChanged(false);
     setNextElection(null);
     setFindingNext(false);
   }, [id]);
@@ -72,10 +79,11 @@ export default function ElectionDetail() {
     setSubmitting(true);
     setCastError(null);
 
-    // The ballot is written by a SECURITY DEFINER function so the choice is
-    // never stored next to the voter. That function also records the receipt
-    // that stops a second ballot in the same election.
-    const { error: castRpcError } = await supabase.rpc("cast_vote", {
+    // Both writes go through SECURITY DEFINER functions so the choice is never
+    // stored next to the voter. "cast_vote" records the receipt that stops a
+    // second ballot; "change_vote" overwrites the ballot the student already
+    // holds instead of adding another one.
+    const { error: castRpcError } = await supabase.rpc(editing ? "change_vote" : "cast_vote", {
       p_election_id: election.id,
       p_candidate_id: selectedId,
     });
@@ -94,6 +102,15 @@ export default function ElectionDetail() {
 
     setSubmitting(false);
     setConfirmOpen(false);
+
+    if (editing) {
+      // Replacing a ballot is not a new vote: stay on this page and say so.
+      setEditing(false);
+      setJustChanged(true);
+      await reload();
+      return;
+    }
+
     setJustVoted(true);
     setFindingNext(true);
     await reload();
@@ -101,6 +118,15 @@ export default function ElectionDetail() {
     const remaining = await fetchRemainingOpenElections(election.id);
     setNextElection(remaining[0] ?? null);
     setFindingNext(false);
+  };
+
+  // Reopen the ballot with the student's own pick preselected, so changing a
+  // choice is a matter of picking somebody else and confirming.
+  const startEditing = () => {
+    setSelectedId(myCandidateId);
+    setCastError(null);
+    setJustChanged(false);
+    setEditing(true);
   };
 
   // Skipping is not a vote: nothing is written to the database. We only remember
@@ -142,7 +168,14 @@ export default function ElectionDetail() {
     );
   }
 
-  const locked = hasVoted || justVoted;
+  // The ballot is locked once it has been cast — unless the student has asked
+  // to change it while voting is still open.
+  const locked = (hasVoted || justVoted) && !editing;
+
+  // A ballot can only be reopened while the election runs and while we still
+  // hold a pointer to it. Ballots cast before change-my-vote existed have no
+  // pointer, so those students correctly see no edit option.
+  const canEdit = isLive && hasVoted && Boolean(myCandidateId);
 
   return (
     <AppShell>
@@ -199,7 +232,9 @@ export default function ElectionDetail() {
                   Your ballot has been cast
                 </h2>
                 <p className="mt-1 text-sm text-on-tertiary-container/80">
-                  It is sealed and cannot be changed.
+                  {isLive
+                    ? "You can change your mind while voting is open."
+                    : "It is sealed and cannot be changed."}
                 </p>
               </div>
             </div>
@@ -239,16 +274,34 @@ export default function ElectionDetail() {
           </div>
         )}
 
-        {hasVoted && !justVoted && (
-          <div className="mt-8">
+        {hasVoted && !justVoted && !editing && (
+          <div className="mt-8 flex flex-col items-start gap-4">
             <Alert tone="success">
               <span className="flex flex-col gap-1">
-                <span className="font-semibold">Your ballot has been cast.</span>
+                <span className="font-semibold">
+                  {justChanged ? "Your new vote is saved." : "Your ballot has been cast."}
+                </span>
                 <span className="font-normal">
-                  It is sealed and cannot be changed. Thank you for voting — results appear here once they
-                  are published.
+                  {canEdit
+                    ? "You can still change your mind while voting is open. Results appear here once they are published."
+                    : "It is sealed and cannot be changed. Thank you for voting — results appear here once they are published."}
                 </span>
               </span>
+            </Alert>
+            {canEdit && (
+              <Button variant="outline" size="md" onClick={startEditing}>
+                <Pencil className="h-4 w-4" strokeWidth={2.4} />
+                Change my vote
+              </Button>
+            )}
+          </div>
+        )}
+
+        {editing && (
+          <div className="mt-8">
+            <Alert tone="info">
+              You are changing your vote. Pick a different candidate below, then confirm — your earlier
+              ballot will be replaced and is not kept.
             </Alert>
           </div>
         )}
@@ -263,7 +316,7 @@ export default function ElectionDetail() {
           </div>
         )}
 
-        {isLive && !locked && (
+        {isLive && !locked && !editing && (
           <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary/50 bg-tertiary-container/40 px-4 py-3 text-sm text-on-tertiary-container">
             <Lock className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.2} />
             <p>
@@ -326,6 +379,7 @@ export default function ElectionDetail() {
         selectedName={selectedCandidate?.name ?? null}
         isLive={isLive}
         hasVoted={locked}
+        editing={editing}
         isSignedIn={Boolean(session)}
         submitting={submitting}
         skipping={skipping}
@@ -338,7 +392,7 @@ export default function ElectionDetail() {
 
       <Modal
         open={confirmOpen}
-        title="Confirm your ballot"
+        title={editing ? "Confirm your new vote" : "Confirm your ballot"}
         onClose={() => (submitting ? undefined : setConfirmOpen(false))}
         footer={
           <>
@@ -350,21 +404,28 @@ export default function ElectionDetail() {
               Go back
             </Button>
             <Button onClick={() => void castVote()} disabled={submitting}>
-              {submitting ? "Casting…" : "Cast my vote"}
+              {submitting
+                ? editing
+                  ? "Saving…"
+                  : "Casting…"
+                : editing
+                  ? "Save my new vote"
+                  : "Cast my vote"}
             </Button>
           </>
         }
       >
         <p className="text-sm leading-relaxed text-on-surface-variant">
-          You are about to vote for
+          {editing ? "You are changing your vote to" : "You are about to vote for"}
         </p>
         <p className="mt-2 flex items-center gap-2 text-2xl font-normal text-on-surface">
           <CheckCircle2 className="h-5 w-5 text-tertiary" strokeWidth={2.4} />
           {selectedCandidate?.name}
         </p>
         <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
-          This cannot be undone. You will not be able to vote again in this election, and your choice stays
-          secret.
+          {editing
+            ? "This replaces the ballot you cast earlier. Your choice stays secret, and the earlier ballot is not kept."
+            : "Your choice stays secret. You can change it while voting is open; once voting closes it is final and you cannot vote again in this election."}
         </p>
       </Modal>
     </AppShell>

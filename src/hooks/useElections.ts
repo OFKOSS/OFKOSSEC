@@ -131,24 +131,30 @@ interface ElectionDetailState {
   election: Election | null;
   candidates: Candidate[];
   hasVoted: boolean;
+  /** The caller's own pick, or null. A function rather than a read of votes,
+   *  because a ballot is anonymous and only its owner may be told what it says. */
+  myCandidateId: string | null;
   loading: boolean;
   error: string | null;
 }
 
+const EMPTY_DETAIL: ElectionDetailState = {
+  election: null,
+  candidates: [],
+  hasVoted: false,
+  myCandidateId: null,
+  loading: true,
+  error: null,
+};
+
 /** A single election plus its candidates and the caller's ballot state. */
 export function useElectionDetail(electionId: string | undefined) {
   const userId = useAuthStore((state) => state.session?.user.id ?? null);
-  const [state, setState] = useState<ElectionDetailState>({
-    election: null,
-    candidates: [],
-    hasVoted: false,
-    loading: true,
-    error: null,
-  });
+  const [state, setState] = useState<ElectionDetailState>(EMPTY_DETAIL);
 
   const load = useCallback(async () => {
     if (!electionId) {
-      setState({ election: null, candidates: [], hasVoted: false, loading: false, error: "Missing election" });
+      setState({ ...EMPTY_DETAIL, loading: false, error: "Missing election" });
       return;
     }
 
@@ -165,21 +171,37 @@ export function useElectionDetail(electionId: string | undefined) {
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as { data: null; error: null });
 
-    const [electionRes, candidatesRes, receiptRes] = await Promise.all([
+    // Separate from the receipt: the receipt says a ballot exists, this says
+    // what it holds — and it only ever answers for the caller.
+    const ballotPromise = userId
+      ? supabase.rpc("get_my_ballot", { p_election_id: electionId })
+      : Promise.resolve({ data: null, error: null });
+
+    const [electionRes, candidatesRes, receiptRes, ballotRes] = await Promise.all([
       supabase.from("elections").select("*").eq("id", electionId).maybeSingle(),
       supabase.from("candidates").select("*").eq("election_id", electionId).order("sort_order"),
       receiptPromise,
+      ballotPromise,
     ]);
 
     if (electionRes.error) {
-      setState({ election: null, candidates: [], hasVoted: false, loading: false, error: electionRes.error.message });
+      setState({
+        ...EMPTY_DETAIL,
+        loading: false,
+        error: electionRes.error.message,
+      });
       return;
+    }
+
+    if (ballotRes.error) {
+      console.error("Could not load your ballot", ballotRes.error.message);
     }
 
     setState({
       election: (electionRes.data as Election) ?? null,
       candidates: (candidatesRes.data as Candidate[]) ?? [],
       hasVoted: Boolean(receiptRes.data),
+      myCandidateId: (ballotRes.data as string | null) ?? null,
       loading: false,
       error: null,
     });

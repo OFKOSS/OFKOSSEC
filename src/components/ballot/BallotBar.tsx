@@ -7,6 +7,9 @@ interface BallotBarProps {
   selectedName: string | null;
   isLive: boolean;
   hasVoted: boolean;
+  /** The voter already voted and is replacing that ballot rather than casting
+   *  a first one, so the labels change and skipping is hidden. */
+  editing: boolean;
   isSignedIn: boolean;
   submitting: boolean;
   skipping: boolean;
@@ -21,6 +24,7 @@ export function BallotBar({
   selectedName,
   isLive,
   hasVoted,
+  editing,
   isSignedIn,
   submitting,
   skipping,
@@ -61,7 +65,7 @@ export function BallotBar({
         <div className={cn("flex shrink-0 items-center gap-3")}>
           {isSignedIn ? (
             <>
-              {isLive && !hasVoted && (
+              {isLive && !hasVoted && !editing && (
                 <Button
                   variant="ghost"
                   size="lg"
@@ -79,7 +83,15 @@ export function BallotBar({
                 disabled={!isLive || hasVoted || !selectedName || submitting || skipping}
                 className="flex-1 sm:flex-none"
               >
-                {submitting ? "Casting…" : hasVoted ? "Vote recorded" : "Cast my vote"}
+                {submitting
+                  ? editing
+                    ? "Saving…"
+                    : "Casting…"
+                  : hasVoted
+                    ? "Vote recorded"
+                    : editing
+                      ? "Save my new vote"
+                      : "Cast my vote"}
               </Button>
             </>
           ) : (
