@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
@@ -28,11 +28,15 @@ import type { Election } from "@/types";
 export default function ElectionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { election, candidates, hasVoted, myCandidateId, loading, error, reload } =
     useElectionDetail(id);
 
   const session = useAuthStore((state) => state.session);
   const userId = session?.user.id ?? null;
+
+  // "My ballot" links here with ?edit=1 to say "open this ballot for changing".
+  const wantsEdit = searchParams.get("edit") === "1";
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -45,6 +49,8 @@ export default function ElectionDetail() {
   const [nextElection, setNextElection] = useState<Election | null>(null);
   const [findingNext, setFindingNext] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  // Keeps the ?edit=1 hand-off to a single opening.
+  const autoEditDone = useRef(false);
 
   const selectedCandidate = useMemo(
     () => candidates.find((candidate) => candidate.id === selectedId) ?? null,
@@ -62,6 +68,7 @@ export default function ElectionDetail() {
     setJustChanged(false);
     setNextElection(null);
     setFindingNext(false);
+    autoEditDone.current = false;
   }, [id]);
 
   // Once a student has confirmed their ballot, walk them on to the next
@@ -122,12 +129,22 @@ export default function ElectionDetail() {
 
   // Reopen the ballot with the student's own pick preselected, so changing a
   // choice is a matter of picking somebody else and confirming.
-  const startEditing = () => {
+  const startEditing = useCallback(() => {
     setSelectedId(myCandidateId);
     setCastError(null);
     setJustChanged(false);
     setEditing(true);
-  };
+  }, [myCandidateId]);
+
+  // Arriving from "My ballot" with ?edit=1, open the picker as soon as the
+  // ballot has loaded. The request is spent the moment the election loads, so a
+  // student who had not voted yet is not dropped into the picker straight after
+  // casting their first ballot, and saving does not reopen the one they closed.
+  useEffect(() => {
+    if (autoEditDone.current || !wantsEdit || loading || !election) return;
+    autoEditDone.current = true;
+    if (hasVoted && myCandidateId && election.status === "active") startEditing();
+  }, [wantsEdit, loading, election, hasVoted, myCandidateId, startEditing]);
 
   // Skipping is not a vote: nothing is written to the database. We only remember
   // the choice for this session and move the student on to their next ballot.

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Mail,
+  Pencil,
   Vote,
 } from "lucide-react";
 import { AppShell, PageHeading } from "@/components/layout/AppShell";
@@ -139,7 +140,7 @@ export default function Profile() {
               />
             ) : (
               <ul className="flex flex-col gap-3">
-                {items.map(({ election, createdAt }) => (
+                {items.map(({ election, createdAt, canChange }) => (
                   <li
                     key={election.id}
                     className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-outline-variant bg-surface-container-low p-4 shadow-elev-1"
@@ -158,8 +159,17 @@ export default function Profile() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <StatusChip status={election.status} resultsPublic={election.results_public} />
+                      {canChange && (
+                        <Link
+                          to={`/elections/${election.id}?edit=1`}
+                          className={buttonClasses("outline", "sm")}
+                        >
+                          <Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />
+                          Change my vote
+                        </Link>
+                      )}
                       {election.status !== "active" && election.results_public && (
                         <Link
                           to={`/elections/${election.id}/results`}

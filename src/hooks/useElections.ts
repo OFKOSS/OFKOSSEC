@@ -272,10 +272,19 @@ export function useTurnout(electionId: string | undefined, enabled: boolean) {
   return { turnout, reload: load };
 }
 
+export interface VotingHistoryItem {
+  election: Election;
+  createdAt: string;
+  /** True while this ballot can still be replaced: the election is open and we
+   *  still hold a pointer to the ballot. Ballots cast before change-my-vote
+   *  existed have no pointer, so those stay final. */
+  canChange: boolean;
+}
+
 /** Elections the signed-in user has already voted in. */
 export function useVotingHistory() {
   const userId = useAuthStore((state) => state.session?.user.id ?? null);
-  const [items, setItems] = useState<Array<{ election: Election; createdAt: string }>>([]);
+  const [items, setItems] = useState<VotingHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -304,26 +313,39 @@ export function useVotingHistory() {
     }
 
     const ids = receipts.map((receipt) => receipt.election_id);
-    const { data: elections, error: electionsError } = await supabase
-      .from("elections")
-      .select("*")
-      .in("id", ids);
+    const [electionsRes, pointersRes] = await Promise.all([
+      supabase.from("elections").select("*").in("id", ids),
+      // Only the ballot's owner may read a pointer, and the table is wiped when
+      // an election closes — so this list is exactly "ballots I can still change".
+      supabase.from("ballot_pointers").select("election_id").eq("voter_id", userId),
+    ]);
 
-    if (electionsError) {
-      console.error("Could not load voted elections", electionsError.message);
+    if (electionsRes.error) {
+      console.error("Could not load voted elections", electionsRes.error.message);
       setItems([]);
       setLoading(false);
       return;
     }
 
-    const byId = new Map((elections as Election[]).map((election) => [election.id, election]));
+    if (pointersRes.error) {
+      console.error("Could not load changeable ballots", pointersRes.error.message);
+    }
+
+    const changeable = new Set((pointersRes.data ?? []).map((row) => row.election_id as string));
+    const byId = new Map((electionsRes.data as Election[]).map((election) => [election.id, election]));
     setItems(
       receipts
         .map((receipt) => {
           const election = byId.get(receipt.election_id);
-          return election ? { election, createdAt: receipt.created_at as string } : null;
+          return election
+            ? {
+                election,
+                createdAt: receipt.created_at as string,
+                canChange: election.status === "active" && changeable.has(election.id),
+              }
+            : null;
         })
-        .filter((item): item is { election: Election; createdAt: string } => item !== null),
+        .filter((item): item is VotingHistoryItem => item !== null),
     );
     setLoading(false);
   }, [userId]);
