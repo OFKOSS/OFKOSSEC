@@ -15,6 +15,9 @@ dist-ssr
 .vercel
 ._*
 
+# One-off Supabase setup script (not part of the app)
+supabase-setup.sql
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
