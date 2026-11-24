@@ -21,18 +21,28 @@ export const STATUS_META: Record<
   },
 };
 
+/**
+ * The school's class list. The class name is also the voter's password, so
+ * these strings are matched exactly on import and must stay in this order.
+ */
 export const CLASS_OPTIONS = [
-  "Form 1 — Science",
-  "Form 1 — Arts",
-  "Form 1 — Business",
-  "Form 1 — Technical",
-  "Form 2 — Science",
-  "Form 2 — Arts",
-  "Form 2 — Business",
-  "Form 2 — Technical",
-  "Form 3 — Science",
-  "Form 3 — Arts",
-  "Form 3 — Business",
-  "Form 3 — Technical",
+  "3A1",
+  "3A2",
+  "3A3",
+  "3A4",
+  "3B",
+  "3C1",
+  "3C2",
+  "3GS",
+  "3V",
+  "2A1",
+  "2A2",
+  "2A3",
+  "2A4",
+  "2B",
+  "2C1",
+  "2C2",
+  "2GS",
+  "2V",
 ];
 

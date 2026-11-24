@@ -18,9 +18,9 @@ const TEMPLATE_SHEET = "Voters";
 /** index number, class, full name — the columns the importer expects. */
 const TEMPLATE_ROWS: string[][] = [
   ["Index number", "Class", "Full name"],
-  ["SHS/2026/0148", CLASS_OPTIONS[8], "Ama Serwaa"],
-  ["SHS/2026/0149", CLASS_OPTIONS[9], "Kwabena Mensah"],
-  ["SHS/2026/0150", CLASS_OPTIONS[6], ""],
+  ["SHS/2026/0148", CLASS_OPTIONS[0], "Ama Serwaa"],
+  ["SHS/2026/0149", CLASS_OPTIONS[1], "Kwabena Mensah"],
+  ["SHS/2026/0150", CLASS_OPTIONS[9], ""],
 ];
 
 function saveBlob(blob: Blob, filename: string) {
@@ -47,7 +47,7 @@ export async function downloadVoterTemplateXlsx(): Promise<void> {
 
 /** Same template as a CSV, for officers who prefer plain text. */
 export function downloadVoterTemplateCsv(): void {
-  // Excel only keeps the em dash in the class names when the BOM is present.
+  // The BOM keeps Excel from mangling characters when it opens the file.
   const csv = "\uFEFF" + TEMPLATE_ROWS.map((row) => row.join(",")).join("\r\n") + "\r\n";
   saveBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), VOTER_CSV_FILENAME);
 }

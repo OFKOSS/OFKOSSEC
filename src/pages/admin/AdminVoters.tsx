@@ -150,7 +150,7 @@ export default function AdminVoters() {
   const [importError, setImportError] = useState<string | null>(null);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [bulkReport, setBulkReport] = useState<
-    { created: number; source: string; problems: BulkProblem[] } | null
+    { created: number; updated: number; source: string; problems: BulkProblem[] } | null
   >(null);
 
   const [query, setQuery] = useState("");
@@ -192,6 +192,27 @@ export default function AdminVoters() {
     () => new Set(voters.map((voter) => voter.class_name).filter(Boolean)).size,
     [voters],
   );
+
+  /** Existing voters keyed by normalised index number, used to upsert on import. */
+  const existingByIndex = useMemo(() => {
+    const map = new Map<string, Profile>();
+    voters.forEach((voter) => {
+      if (voter.student_id) map.set(normalizeIndexNumber(voter.student_id), voter);
+    });
+    return map;
+  }, [voters]);
+
+  /** What the pending file will change, shown before the officer confirms. */
+  const pendingBreakdown = useMemo(() => {
+    if (!pendingImport) return null;
+    let added = 0;
+    let updated = 0;
+    pendingImport.rows.forEach((row) => {
+      if (existingByIndex.has(normalizeIndexNumber(row.index))) updated += 1;
+      else added += 1;
+    });
+    return { added, updated };
+  }, [pendingImport, existingByIndex]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -236,10 +257,14 @@ export default function AdminVoters() {
     await load();
   };
 
-  /** Creates every valid row and reports the lines that failed. */
+  /**
+   * Creates or updates every valid row and reports the lines that failed.
+   * Re-uploading a list overwrites students already on the register instead of
+   * rejecting them; an import never removes anyone.
+   */
   const createVoters = async (rows: BulkRow[], problems: BulkProblem[], source: string) => {
     if (rows.length === 0) {
-      setBulkReport({ created: 0, source, problems });
+      setBulkReport({ created: 0, updated: 0, source, problems });
       setPendingImport(null);
       return;
     }
@@ -248,12 +273,20 @@ export default function AdminVoters() {
 
     const results = await Promise.all(
       rows.map(async (row) => {
-        const { error } = await supabase.rpc("admin_create_voter", {
-          p_index_number: row.index,
-          p_class_name: row.className,
-          p_full_name: row.name || null,
-        });
-        return { row, error: error?.message ?? null };
+        const match = existingByIndex.get(normalizeIndexNumber(row.index));
+        const { error } = match
+          ? await supabase.rpc("admin_update_voter", {
+              p_voter_id: match.id,
+              p_index_number: row.index,
+              p_class_name: row.className,
+              p_full_name: row.name || null,
+            })
+          : await supabase.rpc("admin_create_voter", {
+              p_index_number: row.index,
+              p_class_name: row.className,
+              p_full_name: row.name || null,
+            });
+        return { row, updated: Boolean(match), error: error?.message ?? null };
       }),
     );
 
@@ -266,12 +299,14 @@ export default function AdminVoters() {
         reason: result.error as string,
       }));
 
-    const created = results.length - failures.length;
+    const succeeded = results.filter((result) => !result.error);
+    const updated = succeeded.filter((result) => result.updated).length;
+    const created = succeeded.length - updated;
 
     setBulkBusy(false);
-    setBulkReport({ created, source, problems: [...problems, ...failures] });
+    setBulkReport({ created, updated, source, problems: [...problems, ...failures] });
     setPendingImport(null);
-    if (created > 0) {
+    if (succeeded.length > 0) {
       setBulkText("");
       await load();
     }
@@ -482,7 +517,8 @@ export default function AdminVoters() {
               Fill the Excel template, then upload it here. One voter per row:{" "}
               <span className="font-mono text-xs">index number</span>,{" "}
               <span className="font-mono text-xs">class</span>,{" "}
-              <span className="font-mono text-xs">full name</span>.
+              <span className="font-mono text-xs">full name</span>. Re-uploading updates students
+              already on the register — it never removes anyone.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -535,6 +571,11 @@ export default function AdminVoters() {
                   <span className="font-medium">{pluralise(pendingImport.rows.length, "voter")}</span> found in{" "}
                   <span className="font-mono text-xs">{pendingImport.source}</span>
                 </p>
+                {pendingBreakdown && (
+                  <p className="mt-1 text-xs text-on-surface-variant">
+                    {pendingBreakdown.added} new · {pendingBreakdown.updated} updated
+                  </p>
+                )}
 
                 {pendingImport.rows.length > 0 && (
                   <ul className="mt-3 flex max-h-40 flex-col gap-1 overflow-y-auto text-xs text-on-surface-variant">
@@ -606,7 +647,7 @@ export default function AdminVoters() {
                   rows={6}
                   value={bulkText}
                   onChange={(event) => setBulkText(event.target.value)}
-                  placeholder={"Index number, Class, Full name\nSHS/2026/0148, Form 3 — Science, Ama Serwaa\nSHS/2026/0149, Form 3 — Science, Kwabena Mensah"}
+                  placeholder={"Index number, Class, Full name\nSHS/2026/0148, 3A1, Ama Serwaa\nSHS/2026/0149, 3A1, Kwabena Mensah"}
                   className="font-mono text-xs"
                 />
               </Field>
@@ -630,6 +671,11 @@ export default function AdminVoters() {
                     Added {pluralise(bulkReport.created, "voter")} from {bulkReport.source}.
                   </Alert>
                 )}
+                {bulkReport.updated > 0 && (
+                  <Alert tone="success">
+                    Updated {pluralise(bulkReport.updated, "voter")} already on the register.
+                  </Alert>
+                )}
                 {bulkReport.problems.length > 0 && (
                   <div className="rounded-2xl bg-error-container p-3.5 text-on-error-container">
                     <p className="text-[11px] font-medium uppercase tracking-[0.1em]">
@@ -645,9 +691,11 @@ export default function AdminVoters() {
                     </ul>
                   </div>
                 )}
-                {bulkReport.created === 0 && bulkReport.problems.length === 0 && (
-                  <Alert tone="info">Nothing to add — there were no rows.</Alert>
-                )}
+                {bulkReport.created === 0 &&
+                  bulkReport.updated === 0 &&
+                  bulkReport.problems.length === 0 && (
+                    <Alert tone="info">Nothing to add — there were no rows.</Alert>
+                  )}
               </div>
             )}
           </section>
