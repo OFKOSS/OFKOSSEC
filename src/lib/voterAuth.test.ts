@@ -13,7 +13,11 @@ import {
 // fail — which is the point.
 
 describe("normalizeIndexNumber", () => {
-  it("strips separators and lowercases", () => {
+  it("keeps the real index number format untouched", () => {
+    expect(normalizeIndexNumber("005017200924")).toBe("005017200924");
+  });
+
+  it("tolerates a slashed spelling", () => {
     expect(normalizeIndexNumber("SHS/2026/0148")).toBe("shs-2026-0148");
   });
 
@@ -22,11 +26,7 @@ describe("normalizeIndexNumber", () => {
   });
 
   it("trims leading and trailing separators", () => {
-    expect(normalizeIndexNumber("  /SHS/2026/0148/  ")).toBe("shs-2026-0148");
-  });
-
-  it("keeps plain alphanumeric index numbers intact", () => {
-    expect(normalizeIndexNumber("0148")).toBe("0148");
+    expect(normalizeIndexNumber("  /005017200924/  ")).toBe("005017200924");
   });
 
   it("returns an empty string when nothing usable remains", () => {
@@ -37,11 +37,15 @@ describe("normalizeIndexNumber", () => {
 
 describe("voterEmailFromIndex", () => {
   it("builds the deterministic login email", () => {
-    expect(voterEmailFromIndex("SHS/2026/0148")).toBe(`shs-2026-0148@${VOTER_EMAIL_DOMAIN}`);
+    expect(voterEmailFromIndex("005017200924")).toBe(`005017200924@${VOTER_EMAIL_DOMAIN}`);
   });
 
-  it("is case-insensitive and separator-insensitive", () => {
-    expect(voterEmailFromIndex("shs 2026 0148")).toBe(voterEmailFromIndex("SHS/2026/0148"));
+  it("ignores surrounding spaces", () => {
+    expect(voterEmailFromIndex("  005017200924  ")).toBe(voterEmailFromIndex("005017200924"));
+  });
+
+  it("still accepts a slashed spelling", () => {
+    expect(voterEmailFromIndex("SHS/2026/0148")).toBe(`shs-2026-0148@${VOTER_EMAIL_DOMAIN}`);
   });
 });
 
@@ -57,7 +61,7 @@ describe("officerEmailFromUsername", () => {
 
 describe("isUsableIndexNumber", () => {
   it("accepts a real index number", () => {
-    expect(isUsableIndexNumber("SHS/2026/0148")).toBe(true);
+    expect(isUsableIndexNumber("005017200924")).toBe(true);
   });
 
   it("rejects blank or separator-only input", () => {

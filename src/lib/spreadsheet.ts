@@ -18,9 +18,9 @@ const TEMPLATE_SHEET = "Voters";
 /** index number, class, full name — the columns the importer expects. */
 const TEMPLATE_ROWS: string[][] = [
   ["Index number", "Class", "Full name"],
-  ["SHS/2026/0148", CLASS_OPTIONS[0], "Ama Serwaa"],
-  ["SHS/2026/0149", CLASS_OPTIONS[1], "Kwabena Mensah"],
-  ["SHS/2026/0150", CLASS_OPTIONS[9], ""],
+  ["005017200924", CLASS_OPTIONS[0], "Ama Serwaa"],
+  ["005017200925", CLASS_OPTIONS[1], "Kwabena Mensah"],
+  ["005017200926", CLASS_OPTIONS[9], ""],
 ];
 
 function saveBlob(blob: Blob, filename: string) {

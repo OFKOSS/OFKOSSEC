@@ -457,13 +457,13 @@ export default function AdminVoters() {
               {addError && <Alert>{addError}</Alert>}
               {addSuccess && <Alert tone="success">{addSuccess}</Alert>}
 
-              <Field label="Index number" htmlFor="voter-index" required hint="Example: SHS/2026/0148">
+              <Field label="Index number" htmlFor="voter-index" required hint="Index number, then the year.">
                 <Input
                   id="voter-index"
                   name="voter-index"
                   value={indexNumber}
                   onChange={(event) => setIndexNumber(event.target.value)}
-                  placeholder="SHS/2026/0148"
+                  placeholder="Index number and year e.g. 005017200924"
                   maxLength={40}
                   autoCapitalize="characters"
                 />
@@ -647,7 +647,7 @@ export default function AdminVoters() {
                   rows={6}
                   value={bulkText}
                   onChange={(event) => setBulkText(event.target.value)}
-                  placeholder={"Index number, Class, Full name\nSHS/2026/0148, 3A1, Ama Serwaa\nSHS/2026/0149, 3A1, Kwabena Mensah"}
+                  placeholder={"Index number, Class, Full name\n005017200924, 3A1, Ama Serwaa\n005017200925, 3A1, Kwabena Mensah"}
                   className="font-mono text-xs"
                 />
               </Field>
@@ -923,7 +923,7 @@ export default function AdminVoters() {
               name="edit-voter-index"
               value={editIndex}
               onChange={(event) => setEditIndex(event.target.value)}
-              placeholder="SHS/2026/0148"
+              placeholder="Index number and year e.g. 005017200924"
               maxLength={40}
               autoCapitalize="characters"
             />

@@ -75,13 +75,13 @@ export default function Login() {
             <form onSubmit={handleSubmit} className="mt-7 flex flex-col gap-5">
               {error && <Alert>{error}</Alert>}
 
-              <Field label="Index number" htmlFor="index-number" required hint="Example: SHS/2026/0148">
+              <Field label="Index number" htmlFor="index-number" required hint="Index number, then the year.">
                 <Input
                   id="index-number"
                   name="index-number"
                   value={indexNumber}
                   onChange={(event) => setIndexNumber(event.target.value)}
-                  placeholder="SHS/2026/0148"
+                  placeholder="Index number and year e.g. 005017200924"
                   autoComplete="username"
                   autoCapitalize="characters"
                   maxLength={40}

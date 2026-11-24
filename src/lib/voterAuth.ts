@@ -12,7 +12,12 @@
 export const VOTER_EMAIL_DOMAIN = "voters.ballotbox.edu";
 export const OFFICER_EMAIL_DOMAIN = "officers.ballotbox.edu";
 
-/** "SHS/2026/0148" -> "shs-2026-0148" */
+/**
+ * Trims, lowercases and collapses anything that is not a letter or digit into
+ * a single dash. A real index number such as "005017200924" passes through
+ * untouched; a slashed spelling such as "SHS/2026/0148" becomes
+ * "shs-2026-0148".
+ */
 export function normalizeIndexNumber(indexNumber: string): string {
   return indexNumber
     .trim()
@@ -21,7 +26,7 @@ export function normalizeIndexNumber(indexNumber: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** "SHS/2026/0148" -> "shs-2026-0148@voters.ballotbox.edu" */
+/** "005017200924" -> "005017200924@voters.ballotbox.edu" */
 export function voterEmailFromIndex(indexNumber: string): string {
   return `${normalizeIndexNumber(indexNumber)}@${VOTER_EMAIL_DOMAIN}`;
 }
