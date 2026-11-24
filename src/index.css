@@ -31,11 +31,11 @@
     --md-secondary-container: 232 222 248;
     --md-on-secondary-container: 29 25 43;
 
-    --md-tertiary: 0 97 164;
-    --md-tertiary-hover: 0 73 125;
-    --md-on-tertiary: 255 255 255;
-    --md-tertiary-container: 209 228 255;
-    --md-on-tertiary-container: 0 29 53;
+    --md-tertiary: 254 233 28;
+    --md-tertiary-hover: 224 205 18;
+    --md-on-tertiary: 26 24 0;
+    --md-tertiary-container: 255 250 196;
+    --md-on-tertiary-container: 47 42 0;
 
     --md-error: 179 38 30;
     --md-on-error: 255 255 255;
@@ -72,11 +72,11 @@
     --md-secondary-container: 74 68 88;
     --md-on-secondary-container: 232 222 248;
 
-    --md-tertiary: 158 202 255;
-    --md-tertiary-hover: 126 176 232;
-    --md-on-tertiary: 0 44 80;
-    --md-tertiary-container: 0 71 120;
-    --md-on-tertiary-container: 209 228 255;
+    --md-tertiary: 254 233 28;
+    --md-tertiary-hover: 226 207 24;
+    --md-on-tertiary: 26 24 0;
+    --md-tertiary-container: 74 66 0;
+    --md-on-tertiary-container: 255 245 176;
 
     --md-error: 242 184 181;
     --md-on-error: 96 20 16;
