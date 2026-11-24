@@ -66,15 +66,16 @@ export function useElections() {
       counts.set(row.election_id, (counts.get(row.election_id) ?? 0) + 1);
     }
 
-    // "Has this person voted" must be scoped to the caller: an officer can read
-    // every ballot, so an unfiltered read would badge every election as voted.
+    // "Has this person voted" comes from the receipt table, not the ballot box:
+    // a receipt says that a voter voted without saying for whom. An officer can
+    // read every receipt, so the read stays scoped to the caller.
     const voted = new Set<string>();
     if (userId) {
-      const { data: votes } = await supabase
-        .from("votes")
+      const { data: receipts } = await supabase
+        .from("ballot_receipts")
         .select("election_id")
         .eq("voter_id", userId);
-      for (const row of votes ?? []) voted.add(row.election_id as string);
+      for (const row of receipts ?? []) voted.add(row.election_id as string);
     }
 
     setElections(
@@ -99,13 +100,17 @@ export function useElections() {
  * first. Used to walk a student straight on to their next ballot.
  */
 export async function fetchRemainingOpenElections(excludeId?: string): Promise<Election[]> {
-  const [electionsRes, votesRes] = await Promise.all([
+  const userId = useAuthStore.getState().session?.user.id;
+
+  const [electionsRes, receiptsRes] = await Promise.all([
     supabase
       .from("elections")
       .select("*")
       .eq("status", "active")
       .order("created_at", { ascending: false }),
-    supabase.from("votes").select("election_id"),
+    userId
+      ? supabase.from("ballot_receipts").select("election_id").eq("voter_id", userId)
+      : Promise.resolve({ data: [] as Array<{ election_id: string }>, error: null }),
   ]);
 
   if (electionsRes.error) {
@@ -113,7 +118,7 @@ export async function fetchRemainingOpenElections(excludeId?: string): Promise<E
     return [];
   }
 
-  const voted = new Set((votesRes.data ?? []).map((row) => row.election_id as string));
+  const voted = new Set((receiptsRes.data ?? []).map((row) => row.election_id as string));
   const skipped = readSkipped();
 
   return ((electionsRes.data ?? []) as Election[]).filter(
@@ -149,21 +154,21 @@ export function useElectionDetail(electionId: string | undefined) {
 
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
-    // Filter by voter so an officer previewing a ballot is not mistaken for a
-    // voter: admins can read every row, which would otherwise read as "voted".
-    const votePromise = userId
+    // A receipt is what tells us this voter has already voted. Filtering by
+    // voter keeps an officer previewing a ballot from reading as "voted".
+    const receiptPromise = userId
       ? supabase
-          .from("votes")
-          .select("id")
+          .from("ballot_receipts")
+          .select("election_id")
           .eq("election_id", electionId)
           .eq("voter_id", userId)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as { data: null; error: null });
 
-    const [electionRes, candidatesRes, voteRes] = await Promise.all([
+    const [electionRes, candidatesRes, receiptRes] = await Promise.all([
       supabase.from("elections").select("*").eq("id", electionId).maybeSingle(),
       supabase.from("candidates").select("*").eq("election_id", electionId).order("sort_order"),
-      votePromise,
+      receiptPromise,
     ]);
 
     if (electionRes.error) {
@@ -174,7 +179,7 @@ export function useElectionDetail(electionId: string | undefined) {
     setState({
       election: (electionRes.data as Election) ?? null,
       candidates: (candidatesRes.data as Candidate[]) ?? [],
-      hasVoted: Boolean(voteRes.data),
+      hasVoted: Boolean(receiptRes.data),
       loading: false,
       error: null,
     });
@@ -254,21 +259,29 @@ export function useVotingHistory() {
   const load = useCallback(async () => {
     setLoading(true);
 
-    // Two queries rather than a PostgREST embed: the schema uses logical
-    // foreign keys, so there is no relationship for PostgREST to follow.
-    const { data: votes, error } = await supabase
-      .from("votes")
+    if (!userId) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+
+    // History comes from the receipts: the ballots themselves are anonymous and
+    // carry no voter. Two queries rather than a PostgREST embed, because the
+    // schema uses logical foreign keys, so there is no relationship to follow.
+    const { data: receipts, error } = await supabase
+      .from("ballot_receipts")
       .select("election_id, created_at")
+      .eq("voter_id", userId)
       .order("created_at", { ascending: false });
 
-    if (error || !votes || votes.length === 0) {
+    if (error || !receipts || receipts.length === 0) {
       if (error) console.error("Could not load voting history", error.message);
       setItems([]);
       setLoading(false);
       return;
     }
 
-    const ids = votes.map((vote) => vote.election_id);
+    const ids = receipts.map((receipt) => receipt.election_id);
     const { data: elections, error: electionsError } = await supabase
       .from("elections")
       .select("*")
@@ -283,10 +296,10 @@ export function useVotingHistory() {
 
     const byId = new Map((elections as Election[]).map((election) => [election.id, election]));
     setItems(
-      votes
-        .map((vote) => {
-          const election = byId.get(vote.election_id);
-          return election ? { election, createdAt: vote.created_at as string } : null;
+      receipts
+        .map((receipt) => {
+          const election = byId.get(receipt.election_id);
+          return election ? { election, createdAt: receipt.created_at as string } : null;
         })
         .filter((item): item is { election: Election; createdAt: string } => item !== null),
     );

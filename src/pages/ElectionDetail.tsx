@@ -72,18 +72,20 @@ export default function ElectionDetail() {
     setSubmitting(true);
     setCastError(null);
 
-    const { error: insertError } = await supabase.from("votes").insert({
-      election_id: election.id,
-      candidate_id: selectedId,
-      voter_id: userId,
+    // The ballot is written by a SECURITY DEFINER function so the choice is
+    // never stored next to the voter. That function also records the receipt
+    // that stops a second ballot in the same election.
+    const { error: castRpcError } = await supabase.rpc("cast_vote", {
+      p_election_id: election.id,
+      p_candidate_id: selectedId,
     });
 
-    if (insertError) {
+    if (castRpcError) {
       // 23505 = unique violation: this student already voted in this election.
-      if (insertError.code === "23505") {
+      if (castRpcError.code === "23505") {
         setCastError("Our records already show a ballot from your account in this election.");
       } else {
-        setCastError(insertError.message);
+        setCastError(castRpcError.message);
       }
       setSubmitting(false);
       await reload();

@@ -37,10 +37,20 @@ export interface Candidate {
   created_at: string;
 }
 
+/**
+ * A ballot. Anonymous by design: there is deliberately no voter on the row.
+ * Whether somebody has voted lives separately, in BallotReceipt.
+ */
 export interface Vote {
   id: string;
   election_id: string;
   candidate_id: string;
+  created_at: string;
+}
+
+/** Proof that a voter took part in an election, with no record of the choice. */
+export interface BallotReceipt {
+  election_id: string;
   voter_id: string;
   created_at: string;
 }
