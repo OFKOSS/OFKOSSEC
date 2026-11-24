@@ -9,20 +9,21 @@
       content="OFKOSSEC — secure student council and prefect elections for Senior High School students."
     />
     <title>OFKOSSEC · SHS Student Elections</title>
-    <meta name="theme-color" content="#BAD91C" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#141218" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#141218" />
     <script>
       // Apply the stored colour scheme before first paint so the app never flashes.
+      // Dark is the house default; only an explicit switch to light opts out, so
+      // the OS preference is never consulted.
       (function () {
+        var dark = true;
         try {
-          var stored = localStorage.getItem("ofkossec-theme");
-          var dark = stored
-            ? stored === "dark"
-            : window.matchMedia("(prefers-color-scheme: dark)").matches;
-          if (dark) document.documentElement.classList.add("dark");
+          dark = localStorage.getItem("ofkossec-theme") !== "light";
         } catch (error) {
-          /* storage unavailable — fall back to the light scheme */
+          /* storage unavailable — keep the dark default */
         }
+        if (dark) document.documentElement.classList.add("dark");
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute("content", dark ? "#141218" : "#BAD91C");
       })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

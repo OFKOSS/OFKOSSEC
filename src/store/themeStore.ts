@@ -4,22 +4,20 @@ export type Theme = "light" | "dark";
 
 export const THEME_STORAGE_KEY = "ofkossec-theme";
 
-function systemTheme(): Theme {
-  if (typeof window === "undefined" || !window.matchMedia) return "light";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-/** Read the theme the inline <head> script already applied, falling back to the OS. */
+/**
+ * Dark is the school's default. The OS preference is deliberately ignored so
+ * every visitor gets the intended look; only an explicit switch to light,
+ * recorded under THEME_STORAGE_KEY, opts out.
+ */
 function readInitialTheme(): Theme {
-  if (typeof document !== "undefined") {
-    const fromDom = document.documentElement.classList.contains("dark") ? "dark" : "light";
-    if (fromDom === "dark") return "dark";
-  }
   if (typeof window !== "undefined") {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
+    try {
+      if (window.localStorage.getItem(THEME_STORAGE_KEY) === "light") return "light";
+    } catch {
+      // Storage can be unavailable (private mode) — fall through to dark.
+    }
   }
-  return systemTheme();
+  return "dark";
 }
 
 function applyTheme(theme: Theme) {

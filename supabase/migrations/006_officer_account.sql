@@ -5,7 +5,7 @@
 -- the one officer login the school actually uses:
 --
 --   Username: SO7
---   Password: 123
+--   Password: never committed — see below.
 --
 -- Supabase Auth signs in with an email, so the username is mapped to a
 -- deterministic address the same way voters' index numbers are:
@@ -13,7 +13,25 @@
 --   SO7  ->  so7@officers.ballotbox.edu
 --
 -- Kept in step with src/lib/voterAuth.ts (officerEmailFromUsername).
--- Idempotent: re-running refreshes the password instead of duplicating.
+--
+-- This file used to carry the officer password in plain text. Because the
+-- repository is public, anybody who read it could sign in as an Electoral
+-- Officer, so the account has been rotated and the password is deliberately
+-- no longer stored here. It is still recoverable from the git history, which is
+-- why a strong replacement is required rather than the old value.
+--
+-- A fresh account is therefore created on an unguessable random password: the
+-- address exists but cannot be signed into until an operator sets a real one.
+-- Set it in the Supabase SQL editor:
+--
+--   update auth.users
+--      set encrypted_password = crypt('<the new password>', gen_salt('bf')),
+--          updated_at         = now()
+--    where id = (select id from auth.users
+--                 where lower(email) = 'so7@officers.ballotbox.edu');
+--
+-- Idempotent: re-running never touches an existing password, so it cannot undo
+-- a rotation.
 -- ============================================================================
 
 create extension if not exists pgcrypto;
@@ -23,7 +41,6 @@ declare
   v_old_id  uuid;
   v_user_id uuid;
   v_email   text := 'so7@officers.ballotbox.edu';
-  v_pass    text := '123';
   v_name    text := 'SO7';
 begin
   perform set_config('search_path', 'public, extensions', true);
@@ -60,7 +77,9 @@ begin
       'authenticated',
       'authenticated',
       v_email,
-      crypt(v_pass, gen_salt('bf')),
+      -- Random, unguessable, and not written down anywhere: unusable until an
+      -- operator sets a real password with the statement at the top of the file.
+      crypt(gen_random_uuid()::text, gen_salt('bf')),
       now(),
       '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object('full_name', v_name),
@@ -79,9 +98,10 @@ begin
       now(), now(), now()
     );
   else
+    -- Deliberately not resetting encrypted_password: re-running the migrations
+    -- must never overwrite a password that has been rotated into place.
     update auth.users
-       set encrypted_password = crypt(v_pass, gen_salt('bf')),
-           email_confirmed_at = now(),
+       set email_confirmed_at = now(),
            updated_at         = now()
      where id = v_user_id;
   end if;
