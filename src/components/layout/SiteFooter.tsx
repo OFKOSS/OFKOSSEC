@@ -24,7 +24,7 @@ export function SiteFooter() {
         </div>
       </div>
       <div className="border-t border-outline-variant px-4 py-4 text-center text-xs tracking-[0.12em] text-on-surface-variant sm:px-6">
-        Built for SHS student elections · ballots are secret and immutable
+        Built for SHS student elections · ballots are secret and immutable · by @silas1h
       </div>
     </footer>
   );
