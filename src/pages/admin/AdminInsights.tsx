@@ -39,7 +39,14 @@ export default function AdminInsights() {
       supabase.from("elections").select("*").order("created_at", { ascending: false }),
       supabase.from("candidates").select("id, election_id"),
       supabase.from("votes").select("election_id"),
-      supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "student"),
+      // Same register definition the turnout RPC uses: an account is not a
+      // voter. Without the student_id filter a stray sign-up would be counted
+      // as eligible on this screen while the results screen ignored it.
+      supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("role", "student")
+        .not("student_id", "is", null),
     ]);
 
     if (electionsRes.error) {
