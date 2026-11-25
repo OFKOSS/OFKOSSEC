@@ -27,6 +27,7 @@ import { Modal } from "@/components/ui/Modal";
 import { StatTile } from "@/components/admin/StatTile";
 import { supabase } from "@/lib/supabase";
 import { CLASS_OPTIONS } from "@/lib/constants";
+import { useClasses } from "@/hooks/useClasses";
 import { isUsableIndexNumber, normalizeIndexNumber } from "@/lib/voterAuth";
 import {
   SPREADSHEET_ACCEPT,
@@ -60,8 +61,12 @@ function splitRow(line: string): string[] {
  * Validate a grid of cells — one voter per row, columns:
  * index number, class, full name (name optional).
  * Shared by the paste box and by uploaded .xlsx / .csv files.
+ * The class list comes from the database, so a renamed class validates.
  */
-function parseVoterRows(grid: string[][]): { rows: BulkRow[]; problems: BulkProblem[] } {
+function parseVoterRows(
+  grid: string[][],
+  classList: string[],
+): { rows: BulkRow[]; problems: BulkProblem[] } {
   const rows: BulkRow[] = [];
   const problems: BulkProblem[] = [];
   const seen = new Set<string>();
@@ -95,7 +100,7 @@ function parseVoterRows(grid: string[][]): { rows: BulkRow[]; problems: BulkProb
       });
       return;
     }
-    if (!CLASS_OPTIONS.includes(className)) {
+    if (!classList.includes(className)) {
       problems.push({
         line: lineNo,
         text: parts.join(", "),
@@ -118,12 +123,12 @@ function parseVoterRows(grid: string[][]): { rows: BulkRow[]; problems: BulkProb
 }
 
 /** Turn pasted text into a grid, then reuse the same validation. */
-function parseBulkInput(text: string) {
+function parseBulkInput(text: string, classList: string[]) {
   const grid = text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .map((line) => (line.trim() ? splitRow(line) : []));
-  return parseVoterRows(grid);
+  return parseVoterRows(grid, classList);
 }
 
 interface PendingImport {
@@ -166,6 +171,18 @@ export default function AdminVoters() {
   const [editError, setEditError] = useState<string | null>(null);
   const [editNotice, setEditNotice] = useState<string | null>(null);
 
+  // Managing classes: add, rename, and empty a whole class at once.
+  const { classes, reload: reloadClasses } = useClasses();
+  const [newClassName, setNewClassName] = useState("");
+  const [classBusy, setClassBusy] = useState(false);
+  const [classError, setClassError] = useState<string | null>(null);
+  const [classNotice, setClassNotice] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [pendingClassRemoval, setPendingClassRemoval] = useState<string | null>(null);
+  const [pendingClassDelete, setPendingClassDelete] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -192,6 +209,40 @@ export default function AdminVoters() {
     () => new Set(voters.map((voter) => voter.class_name).filter(Boolean)).size,
     [voters],
   );
+
+  /** How many voters sit in each class — what a bulk removal would take out. */
+  const classCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    voters.forEach((voter) => {
+      if (!voter.class_name) return;
+      counts.set(voter.class_name, (counts.get(voter.class_name) ?? 0) + 1);
+    });
+    return counts;
+  }, [voters]);
+
+  /**
+   * The officer's class list, plus any class already on the register. A roster
+   * imported before migration 013 could name a class the list has never heard
+   * of, and those voters still have to be manageable.
+   */
+  const allClasses = useMemo(() => {
+    const merged = [...classes];
+    const known = new Set(classes);
+    voters.forEach((voter) => {
+      const name = voter.class_name;
+      if (name && !known.has(name)) {
+        known.add(name);
+        merged.push(name);
+      }
+    });
+    return merged;
+  }, [classes, voters]);
+
+  // Keep the add-voter dropdown on a class that still exists, in case the
+  // officer renamed or removed the one we started on.
+  useEffect(() => {
+    if (allClasses.length > 0 && !allClasses.includes(className)) setClassName(allClasses[0]);
+  }, [allClasses, className]);
 
   /** Existing voters keyed by normalised index number, used to upsert on import. */
   const existingByIndex = useMemo(() => {
@@ -314,7 +365,7 @@ export default function AdminVoters() {
 
   /** Paste box → validate, then import straight away. */
   const handlePasteImport = async () => {
-    const { rows, problems } = parseBulkInput(bulkText);
+    const { rows, problems } = parseBulkInput(bulkText, allClasses);
     await createVoters(rows, problems, "the pasted rows");
   };
 
@@ -330,7 +381,7 @@ export default function AdminVoters() {
 
     try {
       const grid = await readSpreadsheetRows(file);
-      const { rows, problems } = parseVoterRows(grid);
+      const { rows, problems } = parseVoterRows(grid, allClasses);
 
       if (rows.length === 0 && problems.length === 0) {
         setImportError("That file looks empty. Use the template and try again.");
@@ -364,7 +415,7 @@ export default function AdminVoters() {
   const startEdit = (voter: Profile) => {
     setEditing(voter);
     setEditIndex(voter.student_id ?? "");
-    setEditClass(voter.class_name ?? CLASS_OPTIONS[0]);
+    setEditClass(voter.class_name ?? allClasses[0] ?? CLASS_OPTIONS[0]);
     setEditName(voter.full_name);
     setEditError(null);
   };
@@ -398,6 +449,117 @@ export default function AdminVoters() {
     );
     setEditing(null);
     await load();
+  };
+
+  /** Adds a class to the officer's list. Existing students are never moved. */
+  const handleAddClass = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setClassError(null);
+    setClassNotice(null);
+
+    const name = newClassName.trim();
+    if (!name) {
+      setClassError("Enter a class name.");
+      return;
+    }
+
+    setClassBusy(true);
+    const { error } = await supabase.rpc("admin_add_class", { p_name: name });
+    setClassBusy(false);
+
+    if (error) {
+      setClassError(error.message);
+      return;
+    }
+
+    setNewClassName("");
+    setClassNotice(`Added ${name} to the class list.`);
+    await reloadClasses();
+  };
+
+  const startRenameClass = (name: string) => {
+    setRenaming(name);
+    setRenameValue(name);
+    setRenameError(null);
+    setClassError(null);
+    setClassNotice(null);
+  };
+
+  /**
+   * Renaming moves every student in the class and changes the class they sign in
+   * with, because the class name is their password.
+   */
+  const saveRenameClass = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!renaming) return;
+
+    const next = renameValue.trim();
+    if (!next) {
+      setRenameError("Enter a class name.");
+      return;
+    }
+
+    setRenameError(null);
+    setClassBusy(true);
+    const { data, error } = await supabase.rpc("admin_rename_class", {
+      p_old_name: renaming,
+      p_new_name: next,
+    });
+    setClassBusy(false);
+
+    if (error) {
+      setRenameError(error.message);
+      return;
+    }
+
+    const moved = Number(data ?? 0);
+    setClassNotice(
+      `Renamed ${renaming} to ${next}. ${pluralise(moved, "voter")} updated — they now sign in with ${next}.`,
+    );
+    setRenaming(null);
+    await Promise.all([load(), reloadClasses()]);
+  };
+
+  /** Removes every voter in a class in one call. */
+  const confirmClassRemoval = async () => {
+    if (!pendingClassRemoval) return;
+    const target = pendingClassRemoval;
+
+    setClassBusy(true);
+    const { data, error } = await supabase.rpc("admin_delete_voters_by_class", {
+      p_class_name: target,
+    });
+    setClassBusy(false);
+    setPendingClassRemoval(null);
+
+    if (error) {
+      setClassError(error.message);
+      return;
+    }
+
+    setClassError(null);
+    setClassNotice(`Removed ${pluralise(Number(data ?? 0), "voter")} from ${target}.`);
+    await load();
+  };
+
+  /** Takes a class off the list. Only possible once it is empty. */
+  const confirmClassDelete = async () => {
+    if (!pendingClassDelete) return;
+    const target = pendingClassDelete;
+
+    setClassBusy(true);
+    const { error } = await supabase.rpc("admin_delete_class", { p_name: target });
+    setClassBusy(false);
+    setPendingClassDelete(null);
+
+    if (error) {
+      setClassError(error.message);
+      return;
+    }
+
+    setClassError(null);
+    setClassNotice(`Removed the empty class ${target} from the list.`);
+    await Promise.all([load(), reloadClasses()]);
   };
 
   return (
@@ -476,7 +638,7 @@ export default function AdminVoters() {
                   value={className}
                   onChange={(event) => setClassName(event.target.value)}
                 >
-                  {CLASS_OPTIONS.map((option) => (
+                  {allClasses.map((option) => (
                     <option key={option} value={option}>
                       {option}
                     </option>
@@ -701,6 +863,115 @@ export default function AdminVoters() {
           </section>
         </div>
 
+        <section className="mt-8 rounded-[28px] border border-outline-variant bg-surface-container p-6 shadow-elev-2 sm:p-7">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-outline-variant bg-tertiary-container text-on-tertiary-container shadow-elev-1">
+              <Layers className="h-4 w-4" strokeWidth={2.2} />
+            </span>
+            <h2 className="text-2xl font-normal text-on-surface">Classes</h2>
+          </div>
+
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-on-surface-variant">
+            The class is also the password, so renaming one moves every student in it and changes what
+            they sign in with. The list students choose from on the sign-in page follows this list.
+          </p>
+
+          {(classError || classNotice) && (
+            <div className="mt-5">
+              {classError ? <Alert>{classError}</Alert> : <Alert tone="success">{classNotice}</Alert>}
+            </div>
+          )}
+
+          <ul className="mt-5 flex flex-col gap-2.5">
+            {allClasses.map((name) => {
+              const count = classCounts.get(name) ?? 0;
+              return (
+                <li
+                  key={name}
+                  className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 shadow-elev-1"
+                >
+                  <div className="flex min-w-0 items-center gap-3.5">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-outline-variant bg-surface-container">
+                      <GraduationCap className="h-4 w-4 text-tertiary" strokeWidth={2.2} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-lg font-normal leading-tight text-on-surface">
+                        {name}
+                      </p>
+                      <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.1em] text-on-surface-variant">
+                        {count === 0 ? "No voters in this class" : pluralise(count, "voter")}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => startRenameClass(name)}
+                      icon={<Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />}
+                    >
+                      Rename
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-outline-variant"
+                      disabled={count === 0}
+                      onClick={() => setPendingClassRemoval(name)}
+                      icon={<Trash2 className="h-3.5 w-3.5" strokeWidth={2.4} />}
+                    >
+                      Remove all voters
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-outline-variant"
+                      disabled={count > 0}
+                      onClick={() => setPendingClassDelete(name)}
+                      icon={<X className="h-3.5 w-3.5" strokeWidth={2.4} />}
+                    >
+                      Delete class
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <form
+            onSubmit={handleAddClass}
+            className="mt-6 flex flex-wrap items-end gap-3 border-t border-dashed border-outline-variant pt-5"
+          >
+            <Field
+              label="Add a class"
+              htmlFor="new-class"
+              className="min-w-[12rem] max-w-xs flex-1"
+              hint="It appears in the class list straight away."
+            >
+              <Input
+                id="new-class"
+                name="new-class"
+                value={newClassName}
+                onChange={(event) => setNewClassName(event.target.value)}
+                placeholder="e.g. 1A1"
+                maxLength={40}
+              />
+            </Field>
+            <Button
+              type="submit"
+              variant="cobalt"
+              size="md"
+              disabled={classBusy || !newClassName.trim()}
+              icon={<Plus className="h-4 w-4" strokeWidth={2.6} />}
+            >
+              {classBusy ? "Saving…" : "Add class"}
+            </Button>
+          </form>
+        </section>
+
         <section className="mt-8 rounded-[28px] border border-outline-variant bg-surface-container p-6 sm:p-7">
           <h2 className="flex items-center gap-2.5 text-2xl font-normal text-on-surface">
             <ClipboardList className="h-5 w-5" strokeWidth={2.2} />
@@ -760,7 +1031,7 @@ export default function AdminVoters() {
                 className="sm:w-52"
               >
                 <option value="all">All classes</option>
-                {CLASS_OPTIONS.map((option) => (
+                {allClasses.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
@@ -793,6 +1064,19 @@ export default function AdminVoters() {
                   </button>
                 )}
               </div>
+
+              {classFilter !== "all" && (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  className="border border-outline-variant"
+                  disabled={classBusy || (classCounts.get(classFilter) ?? 0) === 0}
+                  onClick={() => setPendingClassRemoval(classFilter)}
+                  icon={<Trash2 className="h-4 w-4" strokeWidth={2.4} />}
+                >
+                  Remove all in {classFilter}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -990,8 +1274,115 @@ export default function AdminVoters() {
           <strong className="text-on-surface">{pendingRemoval?.full_name}</strong> will lose access immediately.
         </p>
         <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
-          Any ballot they already cast will also be deleted, so the tallies will change. This cannot be
-          undone.
+          Any ballot they already cast is anonymous and stays in the count. This cannot be undone.
+        </p>
+      </Modal>
+
+      <Modal
+        open={Boolean(renaming)}
+        title="Rename this class?"
+        onClose={() => (classBusy ? undefined : setRenaming(null))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setRenaming(null)}
+              disabled={classBusy}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" form="rename-class-form" disabled={classBusy}>
+              {classBusy ? "Renaming…" : "Rename class"}
+            </Button>
+          </>
+        }
+      >
+        <form id="rename-class-form" onSubmit={saveRenameClass} className="flex flex-col gap-5">
+          {renameError && <Alert>{renameError}</Alert>}
+
+          <Field
+            label="New class name"
+            htmlFor="rename-class"
+            required
+            hint="Students will pick this instead of the old name."
+          >
+            <Input
+              id="rename-class"
+              name="rename-class"
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              maxLength={40}
+            />
+          </Field>
+
+          <p className="border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+            {pluralise(classCounts.get(renaming ?? "") ?? 0, "voter")} in{" "}
+            <span className="font-mono">{renaming}</span> will move to the new name, and because the
+            class is the password they sign in with it from then on. Ballots they have already cast are
+            not touched.
+          </p>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(pendingClassRemoval)}
+        title="Remove every voter in this class?"
+        onClose={() => (classBusy ? undefined : setPendingClassRemoval(null))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setPendingClassRemoval(null)}
+              disabled={classBusy}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void confirmClassRemoval()} disabled={classBusy}>
+              {classBusy ? "Removing…" : "Yes, remove them all"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-on-surface-variant">
+          {pluralise(classCounts.get(pendingClassRemoval ?? "") ?? 0, "voter")} in{" "}
+          <strong className="font-mono text-on-surface">{pendingClassRemoval}</strong> will lose access
+          immediately.
+        </p>
+        <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+          The class itself stays on the list, so you can add a new intake to it. Their receipts and
+          change-my-vote pointers are cleared; the ballots themselves are anonymous and stay in the
+          count. This cannot be undone.
+        </p>
+      </Modal>
+
+      <Modal
+        open={Boolean(pendingClassDelete)}
+        title="Delete this class?"
+        onClose={() => (classBusy ? undefined : setPendingClassDelete(null))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setPendingClassDelete(null)}
+              disabled={classBusy}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void confirmClassDelete()} disabled={classBusy}>
+              {classBusy ? "Deleting…" : "Yes, delete"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-on-surface-variant">
+          <strong className="font-mono text-on-surface">{pendingClassDelete}</strong> comes off the class
+          list, so students no longer see it when they sign in.
+        </p>
+        <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+          No voters are in this class, so nothing else changes.
         </p>
       </Modal>
     </AppShell>

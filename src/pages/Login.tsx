@@ -8,6 +8,7 @@ import { Alert } from "@/components/ui/Feedback";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import { CLASS_OPTIONS } from "@/lib/constants";
+import { useClasses } from "@/hooks/useClasses";
 import { isUsableIndexNumber, voterEmailFromIndex } from "@/lib/voterAuth";
 
 export default function Login() {
@@ -20,6 +21,14 @@ export default function Login() {
   const [className, setClassName] = useState(CLASS_OPTIONS[0]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const { classes } = useClasses();
+
+  // The officer owns the class list and may rename a class, so follow it once it
+  // arrives rather than trusting the built-in default we started on.
+  useEffect(() => {
+    if (classes.length > 0 && !classes.includes(className)) setClassName(classes[0]);
+  }, [classes, className]);
 
   const redirectTo = (location.state as { from?: string } | null)?.from ?? "/elections";
 
@@ -95,7 +104,7 @@ export default function Login() {
                   value={className}
                   onChange={(event) => setClassName(event.target.value)}
                 >
-                  {CLASS_OPTIONS.map((option) => (
+                  {classes.map((option) => (
                     <option key={option} value={option}>
                       {option}
                     </option>

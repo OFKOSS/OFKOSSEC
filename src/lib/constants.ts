@@ -23,7 +23,12 @@ export const STATUS_META: Record<
 
 /**
  * The school's class list. The class name is also the voter's password, so
- * these strings are matched exactly on import and must stay in this order.
+ * these strings are matched exactly on import.
+ *
+ * Officers now manage the live list in the database (public.classes, migration
+ * 013) and can rename, add and remove classes there. This array is the seed for
+ * that table and the fallback the app falls back on when the list cannot be
+ * read — see src/hooks/useClasses.ts.
  */
 export const CLASS_OPTIONS = [
   "3A1",
