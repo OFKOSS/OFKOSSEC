@@ -19,6 +19,7 @@ import EditElection from "@/pages/admin/EditElection";
 import AdminResults from "@/pages/admin/AdminResults";
 import AdminVoters from "@/pages/admin/AdminVoters";
 import AdminAudit from "@/pages/admin/AdminAudit";
+import DeletedElections from "@/pages/admin/DeletedElections";
 
 /** Reset scroll position whenever the route changes. */
 function ScrollToTop() {
@@ -82,6 +83,14 @@ export default function App() {
           element={
             <RequireAdmin>
               <AdminAudit />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/deleted"
+          element={
+            <RequireAdmin>
+              <DeletedElections />
             </RequireAdmin>
           }
         />

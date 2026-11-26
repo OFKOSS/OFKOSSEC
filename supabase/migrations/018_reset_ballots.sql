@@ -136,6 +136,24 @@ begin
   delete from public.votes v
    where not exists (select 1 from public.elections e where e.id = v.election_id);
 
+  -- Those swept ballots belong to no election, so no line in the loop above
+  -- could name them. Record them on their own line — otherwise the count handed
+  -- back to the officer would not add up against the trail, and "who cleared
+  -- those ballots" would have no answer. Same created_at as the rest of the
+  -- sweep, so the viewer still folds it into the one event.
+  if v_swept > 0 then
+    insert into public.audit_log (actor_id, actor_label, action, entity, entity_id, label, details)
+    values (
+      auth.uid(),
+      public.audit_actor_label(),
+      'election.reset',
+      'election',
+      null,
+      'Ballots left by deleted elections',
+      jsonb_build_object('ballots_cleared', v_swept, 'orphaned', true)
+    );
+  end if;
+
   return v_total + v_swept;
 end;
 $$;

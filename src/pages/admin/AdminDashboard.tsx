@@ -14,6 +14,7 @@ import {
   Printer,
   RotateCcw,
   ScrollText,
+  Trash2,
   UserPlus,
   Users,
   Vote,
@@ -221,6 +222,10 @@ export default function AdminDashboard() {
               <Link to="/admin/audit" className={buttonClasses("outline", "lg")}>
                 <ScrollText className="h-4 w-4" strokeWidth={2.6} />
                 Audit trail
+              </Link>
+              <Link to="/admin/deleted" className={buttonClasses("outline", "lg")}>
+                <Trash2 className="h-4 w-4" strokeWidth={2.6} />
+                Deleted elections
               </Link>
               <Link to="/admin/elections/new" className={buttonClasses("primary", "lg")}>
                 <Plus className="h-4 w-4" strokeWidth={2.6} />
