@@ -117,12 +117,20 @@ export function CandidateManager({ electionId }: { electionId: string }) {
     const current = candidates[index];
     const neighbour = candidates[target];
     setBusyId(current.id);
+    setError(null);
 
-    const { error: moveError } = await supabase.from("candidates").upsert([
-      { id: current.id, sort_order: neighbour.sort_order },
-      { id: neighbour.id, sort_order: current.sort_order },
+    // Swap the two sort_order values with plain updates. An upsert of just
+    // { id, sort_order } would be an INSERT … ON CONFLICT DO UPDATE, and the
+    // insert half fails because election_id and name are NOT NULL with no
+    // default — which is why the arrows did nothing. There is no unique
+    // constraint on (election_id, sort_order), so both rows can hold the same
+    // value for the moment between the two writes.
+    const [first, second] = await Promise.all([
+      supabase.from("candidates").update({ sort_order: neighbour.sort_order }).eq("id", current.id),
+      supabase.from("candidates").update({ sort_order: current.sort_order }).eq("id", neighbour.id),
     ]);
 
+    const moveError = first.error ?? second.error;
     if (moveError) setError(moveError.message);
     setBusyId(null);
     await load();
