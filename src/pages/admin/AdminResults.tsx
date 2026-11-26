@@ -4,9 +4,12 @@ import {
   ArrowLeft,
   BarChart3,
   CheckCircle2,
+  Download,
   Eye,
   EyeOff,
   Lock,
+  Pause,
+  Play,
   RefreshCw,
   Trophy,
   Users,
@@ -20,6 +23,8 @@ import { StatTile } from "@/components/admin/StatTile";
 import { ResultsTally, WinnerCallout } from "@/components/results/ResultsTally";
 import { useElectionDetail, useResults, useTurnout } from "@/hooks/useElections";
 import { supabase } from "@/lib/supabase";
+import { downloadResultsCsv, downloadResultsXlsx } from "@/lib/spreadsheet";
+import { cn } from "@/lib/utils";
 import { percent, pluralise } from "@/utils/format";
 import type { Election } from "@/types";
 
@@ -32,15 +37,33 @@ export default function AdminResults() {
   const [election, setElection] = useState<Election | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // While a contest is open the tally and turnout refresh on their own, so an
+  // officer can leave this screen up and watch the count without pressing
+  // Refresh. Polling stops on a closed election and while the tab is hidden.
+  const [live, setLive] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   useEffect(() => {
     if (loadedElection) setElection(loadedElection);
   }, [loadedElection]);
 
-  const refreshAll = useCallback(() => {
-    void reload();
-    void reloadTurnout();
+  const refreshAll = useCallback(async () => {
+    await Promise.all([reload(), reloadTurnout()]);
+    setLastUpdated(Date.now());
   }, [reload, reloadTurnout]);
+
+  useEffect(() => {
+    if (!live || election?.status !== "active") return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void refreshAll();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [live, election?.status, refreshAll]);
+
+  useEffect(() => {
+    if (!electionLoading && !loading && lastUpdated === null) setLastUpdated(Date.now());
+  }, [electionLoading, loading, lastUpdated]);
 
   const patchElection = async (patch: Partial<Election>) => {
     if (!id) return;
@@ -59,12 +82,22 @@ export default function AdminResults() {
       setElection(data as Election);
     }
     setBusy(false);
-    refreshAll();
+    void refreshAll();
   };
 
   const totalVotes = useMemo(
     () => rows.reduce((sum, row) => sum + Number(row.vote_count), 0),
     [rows],
+  );
+  const exportMeta = useMemo(
+    () => ({
+      title: election?.title ?? "Election",
+      position: election?.position ?? "",
+      status: election?.status ?? "closed",
+      voted: turnout?.voted ?? totalVotes,
+      eligible: turnout?.eligible ?? 0,
+    }),
+    [election, turnout, totalVotes],
   );
   const topCount = rows.length ? Math.max(...rows.map((row) => Number(row.vote_count))) : 0;
   const leaders = rows.filter((row) => Number(row.vote_count) === topCount && topCount > 0);
@@ -198,10 +231,48 @@ export default function AdminResults() {
             size="md"
             className="border border-outline-variant"
             disabled={busy}
-            onClick={refreshAll}
+            onClick={() => void refreshAll()}
             icon={<RefreshCw className="h-4 w-4" strokeWidth={2.4} />}
           >
             Refresh
+          </Button>
+
+          {election.status === "active" && (
+            <Button
+              variant="ghost"
+              size="md"
+              className="border border-outline-variant"
+              onClick={() => setLive((value) => !value)}
+              icon={
+                live ? (
+                  <Pause className="h-4 w-4" strokeWidth={2.4} />
+                ) : (
+                  <Play className="h-4 w-4" strokeWidth={2.4} />
+                )
+              }
+            >
+              {live ? "Pause live" : "Resume live"}
+            </Button>
+          )}
+
+          <Button
+            variant="cobalt"
+            size="md"
+            disabled={busy || rows.length === 0}
+            onClick={() => void downloadResultsXlsx(rows, exportMeta)}
+            icon={<Download className="h-4 w-4" strokeWidth={2.4} />}
+          >
+            Download results
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="md"
+            className="border border-outline-variant"
+            disabled={busy || rows.length === 0}
+            onClick={() => downloadResultsCsv(rows, exportMeta)}
+          >
+            CSV
           </Button>
 
           <Link
@@ -211,6 +282,23 @@ export default function AdminResults() {
             View public page
           </Link>
         </div>
+
+        {election.status === "active" && (
+          <p className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.1em] text-on-surface-variant">
+            <span
+              className={cn(
+                "inline-flex h-2 w-2 rounded-full",
+                live ? "animate-pulse bg-primary" : "bg-outline",
+              )}
+            />
+            {live ? "Updating live every 10s" : "Live updates paused"}
+            {lastUpdated && (
+              <span className="text-on-surface-variant/70">
+                · Last updated {new Date(lastUpdated).toLocaleTimeString("en-GB")}
+              </span>
+            )}
+          </p>
+        )}
 
         {!election.results_public && (
           <div className="mt-6">
