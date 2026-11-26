@@ -48,6 +48,8 @@ export default function AdminDashboard() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
+  /** Every ballot row on file — what a full reset clears, strays included. */
+  const [ballotsOnFile, setBallotsOnFile] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,6 +76,9 @@ export default function AdminDashboard() {
     for (const row of votesRes.data ?? []) {
       voteCounts.set(row.election_id, (voteCounts.get(row.election_id) ?? 0) + 1);
     }
+    // Ballots whose election has been deleted belong to no listed election, but
+    // a full reset still clears them, so the tally is kept separately.
+    setBallotsOnFile((votesRes.data ?? []).length);
 
     setRows(
       (electionsRes.data as Election[]).map((election) => ({
@@ -160,6 +165,12 @@ export default function AdminDashboard() {
     }
   };
 
+  const openReset = () => {
+    setError(null);
+    setResetNotice(null);
+    setResetOpen(true);
+  };
+
   const resetAllBallots = async () => {
     setResetting(true);
     setError(null);
@@ -172,10 +183,7 @@ export default function AdminDashboard() {
       return;
     }
     setResetNotice(
-      `${pluralise(Number(data) || 0, "ballot")} cleared across ${pluralise(
-        rows.length,
-        "election",
-      )}. Every student can vote again from a clean sheet.`,
+      `${pluralise(Number(data) || 0, "ballot")} cleared. Every student can vote again from a clean sheet.`,
     );
     await load();
   };
@@ -309,14 +317,14 @@ export default function AdminDashboard() {
               <Button
                 variant="outline"
                 size="md"
-                onClick={() => setResetOpen(true)}
-                disabled={stats.ballots === 0}
+                onClick={openReset}
+                disabled={ballotsOnFile === 0}
                 icon={<RotateCcw className="h-4 w-4" strokeWidth={2.4} />}
               >
                 Reset all votes
               </Button>
             </div>
-            {stats.ballots === 0 && (
+            {ballotsOnFile === 0 && (
               <p className="mt-3 text-xs text-on-surface-variant">
                 There are no ballots to clear right now.
               </p>
@@ -487,7 +495,7 @@ export default function AdminDashboard() {
             <Button
               variant="primary"
               onClick={() => void resetAllBallots()}
-              disabled={resetting || stats.ballots === 0}
+              disabled={resetting || ballotsOnFile === 0}
             >
               {resetting ? "Clearing…" : "Yes, clear every ballot"}
             </Button>
@@ -495,9 +503,16 @@ export default function AdminDashboard() {
         }
       >
         <p className="text-sm leading-relaxed text-on-surface-variant">
-          {pluralise(stats.ballots, "ballot")} across {pluralise(rows.length, "election")} will be
-          deleted. For a single election instead, clear it from that election&apos;s Manage page.
+          {pluralise(ballotsOnFile, "ballot")} will be deleted. For a single election instead, clear
+          it from that election&apos;s Manage page.
         </p>
+        {ballotsOnFile > stats.ballots && (
+          <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+            That includes {pluralise(ballotsOnFile - stats.ballots, "ballot")} left behind by
+            elections you have since deleted. They belong to no election you can open, so this is
+            the only place to clear them.
+          </p>
+        )}
         <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
           Only the ballots go: the elections, their candidates and the register stay exactly as they
           are, and every student can vote again. Nothing brings the cleared ballots back.

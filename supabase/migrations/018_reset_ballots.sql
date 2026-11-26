@@ -106,6 +106,7 @@ as $$
 declare
   v_election record;
   v_total    integer := 0;
+  v_swept    integer := 0;
 begin
   if not public.is_admin() then
     raise exception 'Only Electoral Officers can reset ballots';
@@ -124,12 +125,18 @@ begin
   end loop;
 
   -- Ballots left behind by an election that has since been deleted are keyed to
-  -- an election that is no longer in the loop above, so sweep them separately.
-  delete from public.ballot_pointers;
-  delete from public.ballot_receipts;
-  delete from public.votes;
+  -- an election that is no longer in the loop above, so sweep them separately —
+  -- scoped by the election each row names, which is also the WHERE clause this
+  -- database insists on for every delete.
+  delete from public.ballot_pointers p
+   where not exists (select 1 from public.elections e where e.id = p.election_id);
+  delete from public.ballot_receipts r
+   where not exists (select 1 from public.elections e where e.id = r.election_id);
+  get diagnostics v_swept = row_count;
+  delete from public.votes v
+   where not exists (select 1 from public.elections e where e.id = v.election_id);
 
-  return v_total;
+  return v_total + v_swept;
 end;
 $$;
 
