@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
-import type { Candidate, Election, ElectionResultRow, ElectionSummary, Turnout } from "@/types";
+import type { Candidate, Election, ElectionResultRow, ElectionSummary, Gender, Turnout } from "@/types";
 
 const SKIP_STORAGE_PREFIX = "ofkossec.skippedElections";
 
@@ -37,6 +37,19 @@ export function markElectionSkipped(electionId: string) {
   } catch {
     // Storage may be unavailable (private mode); skipping still works this view.
   }
+}
+
+/**
+ * The gender rule from migration 017: an election open to one gender only is
+ * closed to everyone else, and a voter with no gender on the register counts as
+ * ineligible rather than as a wildcard. The database enforces the same rule when
+ * a ballot is cast; this only stops such a ballot being offered in the first place.
+ */
+export function isGenderBlocked(
+  election: Pick<Election, "eligible_gender">,
+  gender: Gender | null,
+): boolean {
+  return election.eligible_gender !== "any" && gender !== election.eligible_gender;
 }
 
 /** All elections, with candidate counts and whether the current user has voted. */
@@ -101,6 +114,7 @@ export function useElections() {
  */
 export async function fetchRemainingOpenElections(excludeId?: string): Promise<Election[]> {
   const userId = useAuthStore.getState().session?.user.id;
+  const gender = useAuthStore.getState().profile?.gender ?? null;
 
   const [electionsRes, receiptsRes] = await Promise.all([
     supabase
@@ -123,7 +137,10 @@ export async function fetchRemainingOpenElections(excludeId?: string): Promise<E
 
   return ((electionsRes.data ?? []) as Election[]).filter(
     (election) =>
-      election.id !== excludeId && !voted.has(election.id) && !skipped.has(election.id),
+      election.id !== excludeId &&
+      !voted.has(election.id) &&
+      !skipped.has(election.id) &&
+      !isGenderBlocked(election, gender),
   );
 }
 

@@ -20,7 +20,7 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { CandidateCard } from "@/components/ballot/CandidateCard";
 import { BallotBar } from "@/components/ballot/BallotBar";
 import { useElectionDetail, fetchRemainingOpenElections, markElectionSkipped } from "@/hooks/useElections";
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore, useIsAdmin } from "@/store/authStore";
 import { supabase } from "@/lib/supabase";
 import { describeDeadline, formatDateTime, pluralise } from "@/utils/format";
 import type { Election } from "@/types";
@@ -35,6 +35,7 @@ export default function ElectionDetail() {
   const session = useAuthStore((state) => state.session);
   const userId = session?.user.id ?? null;
   const profileGender = useAuthStore((state) => state.profile?.gender ?? null);
+  const isAdmin = useIsAdmin();
 
   // "My ballot" links here with ?edit=1 to say "open this ballot for changing".
   const wantsEdit = searchParams.get("edit") === "1";
@@ -69,6 +70,11 @@ export default function ElectionDetail() {
     election && election.eligible_gender !== "any" ? election.eligible_gender : null;
   const eligible = !restrictedGender || profileGender === restrictedGender;
 
+  // A signed-in student who may not vote here is walked on to their next ballot
+  // rather than left on a page that could only reject them. Officers keep full
+  // access, so they can still preview every ballot.
+  const blocked = Boolean(session) && !isAdmin && isLive && !eligible;
+
   useEffect(() => {
     setSelectedId(null);
     setJustVoted(false);
@@ -87,6 +93,23 @@ export default function ElectionDetail() {
     const timer = window.setTimeout(() => navigate(target, { replace: true }), 4000);
     return () => window.clearTimeout(timer);
   }, [justVoted, findingNext, nextElection, navigate]);
+
+  // Reached a ballot the student's gender may not vote in (for example by an old
+  // link): send them straight on to the next one they can vote in, so a female-
+  // only contest is never put in front of a male student and vice versa.
+  useEffect(() => {
+    if (!blocked || !id) return;
+    let cancelled = false;
+    void (async () => {
+      const remaining = await fetchRemainingOpenElections(id);
+      if (cancelled) return;
+      const target = remaining[0];
+      navigate(target ? `/elections/${target.id}` : "/elections", { replace: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [blocked, id, navigate]);
 
   const castVote = async () => {
     if (!election || !selectedId || !userId || !eligible) return;
@@ -189,6 +212,16 @@ export default function ElectionDetail() {
             }
           />
         </div>
+      </AppShell>
+    );
+  }
+
+  // A restricted ballot this student may not vote in: hold on a brief note while
+  // we look for the next one they can vote in.
+  if (blocked) {
+    return (
+      <AppShell>
+        <PageLoader label="This ballot is not open to you — finding your next one" />
       </AppShell>
     );
   }
