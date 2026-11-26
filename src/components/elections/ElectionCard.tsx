@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, CalendarClock, CheckCircle2, Users } from "lucide-react";
+import { ArrowRight, CalendarClock, CheckCircle2, Home, Users } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { describeDeadline, pluralise } from "@/utils/format";
@@ -48,6 +48,12 @@ export function ElectionCard({ election }: { election: ElectionSummary }) {
             <span className="inline-flex items-center gap-1.5 text-primary">
               <Users className="h-3.5 w-3.5" strokeWidth={2.2} />
               Open to {election.eligible_gender} students only
+            </span>
+          )}
+          {election.eligible_house && (
+            <span className="inline-flex items-center gap-1.5 text-primary">
+              <Home className="h-3.5 w-3.5" strokeWidth={2.2} />
+              Open to {election.eligible_house} only
             </span>
           )}
           {election.hasVoted && (

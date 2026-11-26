@@ -8,6 +8,14 @@ export type Gender = "male" | "female";
 /** Who may cast a ballot in an election. "any" is the unrestricted default. */
 export type EligibleGender = "any" | Gender;
 
+/** One entry in the officer's house list (public.houses, migration 019). */
+export interface House {
+  id: string;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -15,6 +23,8 @@ export interface Profile {
   class_name: string | null;
   role: Role;
   gender: Gender | null;
+  /** The school house this voter belongs to, or null when not recorded. */
+  house: string | null;
   avatar_url: string | null;
   created_at: string;
 }
@@ -28,6 +38,12 @@ export interface Election {
   results_public: boolean;
   /** "any" unless the ballot is restricted to one gender (migration 017). */
   eligible_gender: EligibleGender;
+  /**
+   * The one house that may vote here, or null when every house may vote
+   * (migration 019). Unlike gender there is no "any" keyword: the house list is
+   * the school's own, so an absent value is what means "all".
+   */
+  eligible_house: string | null;
   starts_at: string | null;
   ends_at: string | null;
   created_by: string | null;
@@ -101,6 +117,8 @@ export interface ElectionDraft {
   status: ElectionStatus;
   results_public: boolean;
   eligible_gender: EligibleGender;
+  /** A house name, or "" for every house. */
+  eligible_house: string;
   starts_at: string;
   ends_at: string;
 }

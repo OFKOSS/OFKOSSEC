@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle2,
+  Home,
   Info,
   Lock,
   Loader2,
@@ -37,6 +38,7 @@ export default function ElectionDetail() {
   const profile = useAuthStore((state) => state.profile);
   const profileLoading = useAuthStore((state) => state.profileLoading);
   const profileGender = profile?.gender ?? null;
+  const profileHouse = profile?.house ?? null;
   const isAdmin = useIsAdmin();
 
   // "My ballot" links here with ?edit=1 to say "open this ballot for changing".
@@ -65,23 +67,33 @@ export default function ElectionDetail() {
   const resultsAvailable =
     election?.status === "closed" && Boolean(election?.results_public);
 
-  // Some elections are open to one gender only (migration 017). The database
-  // enforces this; the page mirrors it so a student who may not vote is told
-  // why rather than being handed a ballot that would be rejected on submit.
+  // Some elections are open to one gender only (migration 017) and others to one
+  // house only (migration 019). The database enforces this; the page mirrors it
+  // so a student who may not vote is told why rather than being handed a ballot
+  // that would be rejected on submit.
   const restrictedGender =
     election && election.eligible_gender !== "any" ? election.eligible_gender : null;
-  const eligible = !restrictedGender || profileGender === restrictedGender;
+  const restrictedHouse = election?.eligible_house ?? null;
+
+  const genderFails = Boolean(restrictedGender) && profileGender !== restrictedGender;
+  const houseFails = Boolean(restrictedHouse) && profileHouse !== restrictedHouse;
+  const eligible = !genderFails && !houseFails;
+
+  // How the restriction reads in a sentence: "female students in House 1".
+  const openTo =
+    [restrictedGender && `${restrictedGender} students`, restrictedHouse].filter(Boolean).join(" in ") ||
+    null;
 
   // The rule can only be applied once the register has been read. A profile that
-  // is still loading is not a voter without a gender — judging it as one would
-  // send a student away from a ballot they are entitled to vote in (the same
+  // is still loading is not a voter without a gender or house — judging it as one
+  // would send a student away from a ballot they are entitled to vote in (the same
   // reason RequireAdmin waits before it decides).
-  const genderKnown = Boolean(profile) || !profileLoading;
+  const registerKnown = Boolean(profile) || !profileLoading;
 
   // A signed-in student who may not vote here is walked on to their next ballot
   // rather than left on a page that could only reject them. Officers keep full
   // access, so they can still preview every ballot.
-  const blocked = Boolean(session) && !isAdmin && isLive && genderKnown && !eligible;
+  const blocked = Boolean(session) && !isAdmin && isLive && registerKnown && !eligible;
 
   useEffect(() => {
     setSelectedId(null);
@@ -102,9 +114,9 @@ export default function ElectionDetail() {
     return () => window.clearTimeout(timer);
   }, [justVoted, findingNext, nextElection, navigate]);
 
-  // Reached a ballot the student's gender may not vote in (for example by an old
-  // link): send them straight on to the next one they can vote in, so a female-
-  // only contest is never put in front of a male student and vice versa.
+  // Reached a ballot this student may not vote in, by gender or by house (for
+  // example by an old link): send them straight on to the next one they can vote
+  // in, so a restricted contest is never put in front of a student it excludes.
   useEffect(() => {
     if (!blocked || !id) return;
     let cancelled = false;
@@ -290,6 +302,12 @@ export default function ElectionDetail() {
                 Open to {restrictedGender} students only
               </span>
             )}
+            {restrictedHouse && (
+              <span className="inline-flex items-center gap-1.5 text-primary">
+                <Home className="h-4 w-4" strokeWidth={2.2} />
+                Open to {restrictedHouse} only
+              </span>
+            )}
           </div>
         </header>
 
@@ -398,16 +416,20 @@ export default function ElectionDetail() {
           </div>
         )}
 
-        {isLive && genderKnown && !eligible && !locked && (
+        {isLive && registerKnown && !eligible && !locked && (
           <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-outline-variant bg-surface-container px-4 py-3.5 text-sm text-on-surface-variant">
             <Users className="mt-0.5 h-4 w-4 shrink-0 text-primary" strokeWidth={2.2} />
             <p>
               <span className="font-medium text-on-surface">
-                This ballot is open to {restrictedGender} students only.
+                This ballot is open to {openTo} only.
               </span>{" "}
-              {profileGender
-                ? "Your record is on the register as a different gender, so you cannot vote in this election."
-                : "Your gender is not recorded on the register yet, so you cannot vote in this election. Ask an Electoral Officer to set it if this is wrong."}
+              {genderFails
+                ? profileGender
+                  ? "Your record is on the register as a different gender, so you cannot vote in this election."
+                  : "Your gender is not recorded on the register yet, so you cannot vote in this election. Ask an Electoral Officer to set it if this is wrong."
+                : profileHouse
+                  ? "Your record is on the register in a different house, so you cannot vote in this election."
+                  : "Your house is not recorded on the register yet, so you cannot vote in this election. Ask an Electoral Officer to set it if this is wrong."}
             </p>
           </div>
         )}

@@ -68,6 +68,7 @@ export default function EditElection() {
         status: draft.status,
         results_public: draft.results_public,
         eligible_gender: draft.eligible_gender,
+        eligible_house: draft.eligible_house || null,
         starts_at: draft.starts_at ? new Date(draft.starts_at).toISOString() : null,
         ends_at: draft.ends_at ? new Date(draft.ends_at).toISOString() : null,
       })
@@ -223,7 +224,13 @@ export default function EditElection() {
               </div>
             )}
             <ElectionForm
-              key={election.id + election.status + String(election.results_public) + election.eligible_gender}
+              key={
+                election.id +
+                election.status +
+                String(election.results_public) +
+                election.eligible_gender +
+                (election.eligible_house ?? "")
+              }
               initial={{
                 title: election.title,
                 position: election.position,
@@ -231,6 +238,7 @@ export default function EditElection() {
                 status: election.status,
                 results_public: election.results_public,
                 eligible_gender: election.eligible_gender,
+                eligible_house: election.eligible_house ?? "",
                 starts_at: election.starts_at,
                 ends_at: election.ends_at,
               }}

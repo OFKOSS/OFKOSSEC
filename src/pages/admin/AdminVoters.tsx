@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   FileUp,
   GraduationCap,
+  Home,
   IdCard,
   Layers,
   Pencil,
@@ -28,6 +29,7 @@ import { StatTile } from "@/components/admin/StatTile";
 import { supabase } from "@/lib/supabase";
 import { CLASS_OPTIONS } from "@/lib/constants";
 import { useClasses } from "@/hooks/useClasses";
+import { useHouses } from "@/hooks/useHouses";
 import { isUsableIndexNumber, normalizeIndexNumber } from "@/lib/voterAuth";
 import {
   SPREADSHEET_ACCEPT,
@@ -50,6 +52,7 @@ interface BulkRow {
   className: string;
   name: string;
   gender: Gender | null;
+  house: string | null;
 }
 
 /** Normalise a free-text gender cell to the two values the register accepts. */
@@ -71,13 +74,15 @@ function splitRow(line: string): string[] {
 
 /**
  * Validate a grid of cells — one voter per row, columns:
- * index number, class, full name (optional), gender (optional).
- * Shared by the paste box and by uploaded .xlsx / .csv files.
- * The class list comes from the database, so a renamed class validates.
+ * index number, class, full name (optional), gender (optional), house
+ * (optional). Shared by the paste box and by uploaded .xlsx / .csv files.
+ * The class and house lists come from the database, so a renamed class or house
+ * validates, and a house is stored under the list's own spelling.
  */
 function parseVoterRows(
   grid: string[][],
   classList: string[],
+  houseList: string[],
 ): { rows: BulkRow[]; problems: BulkProblem[] } {
   const rows: BulkRow[] = [];
   const problems: BulkProblem[] = [];
@@ -96,12 +101,13 @@ function parseVoterRows(
     const className = parts[1] ?? "";
     const fullName = parts[2] ?? "";
     const genderCell = parts[3] ?? "";
+    const houseCell = parts[4] ?? "";
 
     if (!indexNumber || !className) {
       problems.push({
         line: lineNo,
         text: parts.join(", "),
-        reason: "Use: index number, class, full name, gender",
+        reason: "Use: index number, class, full name, gender, house",
       });
       return;
     }
@@ -132,6 +138,21 @@ function parseVoterRows(
       return;
     }
 
+    // Matched without regard to case but stored as the list spells it, so
+    // "house 1" and "House 1" never become two different houses.
+    let house: string | null = null;
+    if (houseCell) {
+      house = houseList.find((name) => name.toLowerCase() === houseCell.toLowerCase()) ?? null;
+      if (!house) {
+        problems.push({
+          line: lineNo,
+          text: parts.join(", "),
+          reason: `Unknown house "${houseCell}" — add it to the house list, or leave the cell blank`,
+        });
+        return;
+      }
+    }
+
     const key = normalizeIndexNumber(indexNumber);
     if (seen.has(key)) {
       problems.push({ line: lineNo, text: parts.join(", "), reason: "Duplicate of an earlier line" });
@@ -139,19 +160,19 @@ function parseVoterRows(
     }
 
     seen.add(key);
-    rows.push({ index: indexNumber, className, name: fullName, gender });
+    rows.push({ index: indexNumber, className, name: fullName, gender, house });
   });
 
   return { rows, problems };
 }
 
 /** Turn pasted text into a grid, then reuse the same validation. */
-function parseBulkInput(text: string, classList: string[]) {
+function parseBulkInput(text: string, classList: string[], houseList: string[]) {
   const grid = text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .map((line) => (line.trim() ? splitRow(line) : []));
-  return parseVoterRows(grid, classList);
+  return parseVoterRows(grid, classList, houseList);
 }
 
 interface PendingImport {
@@ -169,6 +190,7 @@ export default function AdminVoters() {
   const [className, setClassName] = useState(CLASS_OPTIONS[0]);
   const [fullName, setFullName] = useState("");
   const [gender, setGender] = useState<Gender | "">("");
+  const [house, setHouse] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
@@ -192,6 +214,7 @@ export default function AdminVoters() {
   const [editClass, setEditClass] = useState(CLASS_OPTIONS[0]);
   const [editName, setEditName] = useState("");
   const [editGender, setEditGender] = useState<Gender | "">("");
+  const [editHouse, setEditHouse] = useState("");
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editNotice, setEditNotice] = useState<string | null>(null);
@@ -207,6 +230,18 @@ export default function AdminVoters() {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [pendingClassRemoval, setPendingClassRemoval] = useState<string | null>(null);
   const [pendingClassDelete, setPendingClassDelete] = useState<string | null>(null);
+
+  // Managing houses: add, rename, and take one off the list. A house works like
+  // gender — an election can be opened to one house only.
+  const { houses, reload: reloadHouses } = useHouses();
+  const [newHouseName, setNewHouseName] = useState("");
+  const [houseBusy, setHouseBusy] = useState(false);
+  const [houseError, setHouseError] = useState<string | null>(null);
+  const [houseNotice, setHouseNotice] = useState<string | null>(null);
+  const [renamingHouse, setRenamingHouse] = useState<string | null>(null);
+  const [houseRenameValue, setHouseRenameValue] = useState("");
+  const [houseRenameError, setHouseRenameError] = useState<string | null>(null);
+  const [pendingHouseDelete, setPendingHouseDelete] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -245,6 +280,16 @@ export default function AdminVoters() {
     return counts;
   }, [voters]);
 
+  /** How many voters sit in each house. */
+  const houseCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    voters.forEach((voter) => {
+      if (!voter.house) return;
+      counts.set(voter.house, (counts.get(voter.house) ?? 0) + 1);
+    });
+    return counts;
+  }, [voters]);
+
   /**
    * The officer's class list, plus any class already on the register. A roster
    * imported before migration 013 could name a class the list has never heard
@@ -268,6 +313,28 @@ export default function AdminVoters() {
   useEffect(() => {
     if (allClasses.length > 0 && !allClasses.includes(className)) setClassName(allClasses[0]);
   }, [allClasses, className]);
+
+  /**
+   * The officer's house list, plus any house already on the register, so a voter
+   * imported under a house that has since been renamed is still editable.
+   */
+  const allHouses = useMemo(() => {
+    const merged = [...houses];
+    const known = new Set(houses);
+    voters.forEach((voter) => {
+      const name = voter.house;
+      if (name && !known.has(name)) {
+        known.add(name);
+        merged.push(name);
+      }
+    });
+    return merged;
+  }, [houses, voters]);
+
+  // If the house we had chosen is taken off the list, fall back to "not recorded".
+  useEffect(() => {
+    if (house && !allHouses.includes(house)) setHouse("");
+  }, [allHouses, house]);
 
   /** Existing voters keyed by normalised index number, used to upsert on import. */
   const existingByIndex = useMemo(() => {
@@ -318,6 +385,7 @@ export default function AdminVoters() {
       p_class_name: className,
       p_full_name: fullName.trim() || null,
       p_gender: gender || null,
+      p_house: house || null,
     });
     setAdding(false);
 
@@ -332,6 +400,7 @@ export default function AdminVoters() {
     setIndexNumber("");
     setFullName("");
     setGender("");
+    setHouse("");
     await load();
   };
 
@@ -352,8 +421,8 @@ export default function AdminVoters() {
     const results = await Promise.all(
       rows.map(async (row) => {
         const match = existingByIndex.get(normalizeIndexNumber(row.index));
-        // A blank gender column means "leave it alone" on an update rather than
-        // wiping a gender an officer already recorded.
+        // A blank gender or house column means "leave it alone" on an update
+        // rather than wiping a value an officer already recorded.
         const { error } = match
           ? await supabase.rpc("admin_update_voter", {
               p_voter_id: match.id,
@@ -361,12 +430,14 @@ export default function AdminVoters() {
               p_class_name: row.className,
               p_full_name: row.name || null,
               p_gender: row.gender ?? match.gender ?? null,
+              p_house: row.house ?? match.house ?? null,
             })
           : await supabase.rpc("admin_create_voter", {
               p_index_number: row.index,
               p_class_name: row.className,
               p_full_name: row.name || null,
               p_gender: row.gender,
+              p_house: row.house,
             });
         return { row, updated: Boolean(match), error: error?.message ?? null };
       }),
@@ -396,7 +467,7 @@ export default function AdminVoters() {
 
   /** Paste box → validate, then import straight away. */
   const handlePasteImport = async () => {
-    const { rows, problems } = parseBulkInput(bulkText, allClasses);
+    const { rows, problems } = parseBulkInput(bulkText, allClasses, allHouses);
     await createVoters(rows, problems, "the pasted rows");
   };
 
@@ -412,7 +483,7 @@ export default function AdminVoters() {
 
     try {
       const grid = await readSpreadsheetRows(file);
-      const { rows, problems } = parseVoterRows(grid, allClasses);
+      const { rows, problems } = parseVoterRows(grid, allClasses, allHouses);
 
       if (rows.length === 0 && problems.length === 0) {
         setImportError("That file looks empty. Use the template and try again.");
@@ -449,6 +520,7 @@ export default function AdminVoters() {
     setEditClass(voter.class_name ?? allClasses[0] ?? CLASS_OPTIONS[0]);
     setEditName(voter.full_name);
     setEditGender(voter.gender ?? "");
+    setEditHouse(voter.house ?? "");
     setEditError(null);
   };
 
@@ -469,6 +541,7 @@ export default function AdminVoters() {
       p_class_name: editClass,
       p_full_name: editName.trim() || null,
       p_gender: editGender || null,
+      p_house: editHouse || null,
     });
     setEditBusy(false);
 
@@ -595,6 +668,90 @@ export default function AdminVoters() {
     await Promise.all([load(), reloadClasses()]);
   };
 
+  /** Adds a house to the officer's list. Existing students are never moved. */
+  const handleAddHouse = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setHouseError(null);
+    setHouseNotice(null);
+
+    const name = newHouseName.trim();
+    if (!name) {
+      setHouseError("Enter a house name.");
+      return;
+    }
+
+    setHouseBusy(true);
+    const { error } = await supabase.rpc("admin_add_house", { p_name: name });
+    setHouseBusy(false);
+
+    if (error) {
+      setHouseError(error.message);
+      return;
+    }
+
+    setNewHouseName("");
+    setHouseNotice(`Added ${name} to the house list.`);
+    await reloadHouses();
+  };
+
+  const startRenameHouse = (name: string) => {
+    setRenamingHouse(name);
+    setHouseRenameValue(name);
+    setHouseRenameError(null);
+    setHouseError(null);
+    setHouseNotice(null);
+  };
+
+  /** Renaming a house moves every student in it, and any election opened to it. */
+  const saveRenameHouse = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!renamingHouse) return;
+
+    const next = houseRenameValue.trim();
+    if (!next) {
+      setHouseRenameError("Enter a house name.");
+      return;
+    }
+
+    setHouseRenameError(null);
+    setHouseBusy(true);
+    const { data, error } = await supabase.rpc("admin_rename_house", {
+      p_old_name: renamingHouse,
+      p_new_name: next,
+    });
+    setHouseBusy(false);
+
+    if (error) {
+      setHouseRenameError(error.message);
+      return;
+    }
+
+    const moved = Number(data ?? 0);
+    setHouseNotice(`Renamed ${renamingHouse} to ${next}. ${pluralise(moved, "voter")} updated.`);
+    setRenamingHouse(null);
+    await Promise.all([load(), reloadHouses()]);
+  };
+
+  /** Takes a house off the list. Only possible once it is empty. */
+  const confirmHouseDelete = async () => {
+    if (!pendingHouseDelete) return;
+    const target = pendingHouseDelete;
+
+    setHouseBusy(true);
+    const { error } = await supabase.rpc("admin_delete_house", { p_name: target });
+    setHouseBusy(false);
+    setPendingHouseDelete(null);
+
+    if (error) {
+      setHouseError(error.message);
+      return;
+    }
+
+    setHouseError(null);
+    setHouseNotice(`Removed ${target} from the house list.`);
+    await reloadHouses();
+  };
+
   return (
     <AppShell>
       <div className="container max-w-6xl px-4 py-12 sm:px-6 lg:py-16">
@@ -707,6 +864,26 @@ export default function AdminVoters() {
                 </Select>
               </Field>
 
+              <Field
+                label="House"
+                htmlFor="voter-house"
+                hint="Needed before this student can vote in a house-restricted election."
+              >
+                <Select
+                  id="voter-house"
+                  name="voter-house"
+                  value={house}
+                  onChange={(event) => setHouse(event.target.value)}
+                >
+                  <option value="">Not recorded</option>
+                  {allHouses.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
               <Button type="submit" size="lg" disabled={adding} className="w-full">
                 <Plus className="h-4 w-4" strokeWidth={2.6} />
                 {adding ? "Adding…" : "Add voter"}
@@ -730,7 +907,8 @@ export default function AdminVoters() {
               <span className="font-mono text-xs">index number</span>,{" "}
               <span className="font-mono text-xs">class</span>,{" "}
               <span className="font-mono text-xs">full name</span>,{" "}
-              <span className="font-mono text-xs">gender</span>. Re-uploading updates students
+              <span className="font-mono text-xs">gender</span>,{" "}
+              <span className="font-mono text-xs">house</span>. Re-uploading updates students
               already on the register — it never removes anyone.
             </p>
 
@@ -797,6 +975,7 @@ export default function AdminVoters() {
                         {row.index} · {row.className}
                         {row.name ? ` · ${row.name}` : ""}
                         {row.gender ? ` · ${GENDER_LABEL[row.gender]}` : ""}
+                        {row.house ? ` · ${row.house}` : ""}
                       </li>
                     ))}
                     {pendingImport.rows.length > 50 && (
@@ -861,7 +1040,7 @@ export default function AdminVoters() {
                   rows={6}
                   value={bulkText}
                   onChange={(event) => setBulkText(event.target.value)}
-                  placeholder={"Index number, Class, Full name, Gender\n005017200924, 3A1, Ama Serwaa, female\n005017200925, 3A1, Kwabena Mensah, male"}
+                  placeholder={"Index number, Class, Full name, Gender, House\n005017200924, 3A1, Ama Serwaa, female, House 1\n005017200925, 3A1, Kwabena Mensah, male, House 2"}
                   className="font-mono text-xs"
                 />
               </Field>
@@ -1020,6 +1199,103 @@ export default function AdminVoters() {
               icon={<Plus className="h-4 w-4" strokeWidth={2.6} />}
             >
               {classBusy ? "Saving…" : "Add class"}
+            </Button>
+          </form>
+        </section>
+
+        <section className="mt-8 rounded-[28px] border border-outline-variant bg-surface-container p-6 shadow-elev-2 sm:p-7">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-outline-variant bg-tertiary-container text-on-tertiary-container shadow-elev-1">
+              <Home className="h-4 w-4" strokeWidth={2.2} />
+            </span>
+            <h2 className="text-2xl font-normal text-on-surface">Houses</h2>
+          </div>
+
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-on-surface-variant">
+            A house works like gender: an election can be opened to one house only, and a student with
+            no house on the register cannot vote in it. Renaming a house moves every student in it and
+            follows it into any election already opened to it.
+          </p>
+
+          {(houseError || houseNotice) && (
+            <div className="mt-5">
+              {houseError ? <Alert>{houseError}</Alert> : <Alert tone="success">{houseNotice}</Alert>}
+            </div>
+          )}
+
+          <ul className="mt-5 flex flex-col gap-2.5">
+            {allHouses.map((name) => {
+              const count = houseCounts.get(name) ?? 0;
+              return (
+                <li
+                  key={name}
+                  className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 shadow-elev-1"
+                >
+                  <div className="flex min-w-0 items-center gap-3.5">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-outline-variant bg-surface-container">
+                      <Home className="h-4 w-4 text-tertiary" strokeWidth={2.2} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-lg font-normal leading-tight text-on-surface">{name}</p>
+                      <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.1em] text-on-surface-variant">
+                        {count === 0 ? "No voters in this house" : pluralise(count, "voter")}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => startRenameHouse(name)}
+                      icon={<Pencil className="h-3.5 w-3.5" strokeWidth={2.4} />}
+                    >
+                      Rename
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-outline-variant"
+                      disabled={count > 0}
+                      onClick={() => setPendingHouseDelete(name)}
+                      icon={<X className="h-3.5 w-3.5" strokeWidth={2.4} />}
+                    >
+                      Delete house
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <form
+            onSubmit={handleAddHouse}
+            className="mt-6 flex flex-wrap items-end gap-3 border-t border-dashed border-outline-variant pt-5"
+          >
+            <Field
+              label="Add a house"
+              htmlFor="new-house"
+              className="min-w-[12rem] max-w-xs flex-1"
+              hint="It appears in the house list straight away."
+            >
+              <Input
+                id="new-house"
+                name="new-house"
+                value={newHouseName}
+                onChange={(event) => setNewHouseName(event.target.value)}
+                placeholder="e.g. House 5"
+                maxLength={40}
+              />
+            </Field>
+            <Button
+              type="submit"
+              variant="cobalt"
+              size="md"
+              disabled={houseBusy || !newHouseName.trim()}
+              icon={<Plus className="h-4 w-4" strokeWidth={2.6} />}
+            >
+              {houseBusy ? "Saving…" : "Add house"}
             </Button>
           </form>
         </section>
@@ -1196,6 +1472,15 @@ export default function AdminVoters() {
                           <Users className="h-3.5 w-3.5" strokeWidth={2.2} />
                           {voter.gender ? GENDER_LABEL[voter.gender] : "no gender"}
                         </span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            voter.house ? "text-on-surface-variant" : "text-primary",
+                          )}
+                        >
+                          <Home className="h-3.5 w-3.5" strokeWidth={2.2} />
+                          {voter.house ?? "no house"}
+                        </span>
                         <span className="text-on-surface-variant">Added {formatDate(voter.created_at)}</span>
                       </p>
                     </div>
@@ -1319,6 +1604,26 @@ export default function AdminVoters() {
               <option value="">Not recorded</option>
               <option value="male">Male</option>
               <option value="female">Female</option>
+            </Select>
+          </Field>
+
+          <Field
+            label="House"
+            htmlFor="edit-voter-house"
+            hint="Needed before this student can vote in a house-restricted election."
+          >
+            <Select
+              id="edit-voter-house"
+              name="edit-voter-house"
+              value={editHouse}
+              onChange={(event) => setEditHouse(event.target.value)}
+            >
+              <option value="">Not recorded</option>
+              {allHouses.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </Select>
           </Field>
 
@@ -1461,6 +1766,81 @@ export default function AdminVoters() {
         </p>
         <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
           No voters are in this class, so nothing else changes.
+        </p>
+      </Modal>
+
+      <Modal
+        open={Boolean(renamingHouse)}
+        title="Rename this house?"
+        onClose={() => (houseBusy ? undefined : setRenamingHouse(null))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setRenamingHouse(null)}
+              disabled={houseBusy}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" form="rename-house-form" disabled={houseBusy}>
+              {houseBusy ? "Renaming…" : "Rename house"}
+            </Button>
+          </>
+        }
+      >
+        <form id="rename-house-form" onSubmit={saveRenameHouse} className="flex flex-col gap-5">
+          {houseRenameError && <Alert>{houseRenameError}</Alert>}
+
+          <Field
+            label="New house name"
+            htmlFor="rename-house"
+            required
+            hint="Students keep their house — only the name changes."
+          >
+            <Input
+              id="rename-house"
+              name="rename-house"
+              value={houseRenameValue}
+              onChange={(event) => setHouseRenameValue(event.target.value)}
+              maxLength={40}
+            />
+          </Field>
+
+          <p className="border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+            {pluralise(houseCounts.get(renamingHouse ?? "") ?? 0, "voter")} in{" "}
+            <span className="font-mono">{renamingHouse}</span> will move to the new name, and any
+            election opened to this house follows it. Ballots already cast are not touched.
+          </p>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(pendingHouseDelete)}
+        title="Delete this house?"
+        onClose={() => (houseBusy ? undefined : setPendingHouseDelete(null))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setPendingHouseDelete(null)}
+              disabled={houseBusy}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void confirmHouseDelete()} disabled={houseBusy}>
+              {houseBusy ? "Deleting…" : "Yes, delete"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-on-surface-variant">
+          <strong className="font-mono text-on-surface">{pendingHouseDelete}</strong> comes off the house
+          list, so it can no longer be chosen when adding voters or restricting an election.
+        </p>
+        <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+          No voters are in this house and no open election is restricted to it, so nothing else changes.
         </p>
       </Modal>
     </AppShell>

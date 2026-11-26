@@ -24,18 +24,18 @@ interface InsightRow extends Election {
   voteCount: number;
 }
 
-/** Registered voters, split so a gender-restricted contest can be measured
- *  against the students who could actually vote in it. */
+/** The register as far as eligibility goes: each voter's gender and house, so a
+ *  restricted contest is measured against the students who could actually vote
+ *  in it — the same definition get_election_turnout uses (migrations 017, 019). */
 interface Register {
   all: number;
-  male: number;
-  female: number;
+  voters: { gender: Gender | null; house: string | null }[];
 }
 
 /** Officer-only roll-up of turnout across every election on the register. */
 export default function AdminInsights() {
   const [rows, setRows] = useState<InsightRow[]>([]);
-  const [register, setRegister] = useState<Register>({ all: 0, male: 0, female: 0 });
+  const [register, setRegister] = useState<Register>({ all: 0, voters: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,11 +50,11 @@ export default function AdminInsights() {
       // Same register definition the turnout RPC uses: an account is not a
       // voter. Without the student_id filter a stray sign-up would be counted
       // as eligible on this screen while the results screen ignored it. Gender
-      // comes along so a restricted election is measured against matching
-      // students, exactly as get_election_turnout does (migration 017).
+      // and house come along so a restricted election is measured against
+      // matching students, exactly as get_election_turnout does (017, 019).
       supabase
         .from("profiles")
-        .select("gender")
+        .select("gender, house")
         .eq("role", "student")
         .not("student_id", "is", null),
     ]);
@@ -75,12 +75,10 @@ export default function AdminInsights() {
       voteCounts.set(row.election_id, (voteCounts.get(row.election_id) ?? 0) + 1);
     }
 
-    const next: Register = { all: 0, male: 0, female: 0 };
-    for (const row of (registerRes.data ?? []) as { gender: Gender | null }[]) {
-      next.all += 1;
-      if (row.gender === "male") next.male += 1;
-      else if (row.gender === "female") next.female += 1;
-    }
+    const next: Register = {
+      all: (registerRes.data ?? []).length,
+      voters: (registerRes.data ?? []) as { gender: Gender | null; house: string | null }[],
+    };
 
     setRows(
       (electionsRes.data as Election[]).map((election) => ({
@@ -97,15 +95,17 @@ export default function AdminInsights() {
     void load();
   }, [load]);
 
-  /** Students who could actually vote in a given election — the whole
-   *  register for an open contest, the matching gender for a restricted one. */
+  /** Students who could actually vote in a given election — the whole register
+   *  for an open contest, or only those matching the gender and house the ballot
+   *  is restricted to. A student with no gender (or no house) does not match a
+   *  restricted contest, mirroring cast_vote(). */
   const eligibleFor = useCallback(
     (election: Election) =>
-      election.eligible_gender === "any"
-        ? register.all
-        : election.eligible_gender === "male"
-          ? register.male
-          : register.female,
+      register.voters.filter(
+        (voter) =>
+          (election.eligible_gender === "any" || voter.gender === election.eligible_gender) &&
+          (!election.eligible_house || voter.house === election.eligible_house),
+      ).length,
     [register],
   );
 

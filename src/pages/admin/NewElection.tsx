@@ -26,6 +26,7 @@ export default function NewElection() {
         status: draft.status,
         results_public: draft.results_public,
         eligible_gender: draft.eligible_gender,
+        eligible_house: draft.eligible_house || null,
         starts_at: draft.starts_at ? new Date(draft.starts_at).toISOString() : null,
         ends_at: draft.ends_at ? new Date(draft.ends_at).toISOString() : null,
         created_by: userId,

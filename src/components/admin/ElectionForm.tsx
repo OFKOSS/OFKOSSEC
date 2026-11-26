@@ -3,6 +3,7 @@ import { CalendarRange, Info } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select, TextArea } from "@/components/ui/Field";
 import { Alert } from "@/components/ui/Feedback";
+import { useHouses } from "@/hooks/useHouses";
 import { toDateTimeLocal } from "@/utils/format";
 import type { ElectionDraft, ElectionStatus, EligibleGender } from "@/types";
 
@@ -23,6 +24,7 @@ const EMPTY: ElectionDraft = {
   status: "draft",
   results_public: false,
   eligible_gender: "any",
+  eligible_house: "",
   starts_at: "",
   ends_at: "",
 };
@@ -43,6 +45,7 @@ export function ElectionForm({
     ends_at: toDateTimeLocal(initial?.ends_at ?? null),
   });
   const [validation, setValidation] = useState<string | null>(null);
+  const { houses } = useHouses();
 
   const set = <K extends keyof ElectionDraft>(key: K, value: ElectionDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -113,7 +116,7 @@ export function ElectionForm({
         />
       </Field>
 
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
         <Field label="Status" htmlFor="status">
           <Select
             id="status"
@@ -126,11 +129,7 @@ export function ElectionForm({
           </Select>
         </Field>
 
-        <Field
-          label="Who may vote"
-          htmlFor="eligible_gender"
-          hint="Restrict this ballot to one gender."
-        >
+        <Field label="Gender" htmlFor="eligible_gender" hint="Restrict this ballot to one gender.">
           <Select
             id="eligible_gender"
             value={draft.eligible_gender}
@@ -139,6 +138,25 @@ export function ElectionForm({
             <option value="any">All students</option>
             <option value="male">Male students only</option>
             <option value="female">Female students only</option>
+          </Select>
+        </Field>
+
+        <Field
+          label="House"
+          htmlFor="eligible_house"
+          hint="Restrict this ballot to one house. A student with no house cannot vote in it."
+        >
+          <Select
+            id="eligible_house"
+            value={draft.eligible_house}
+            onChange={(event) => set("eligible_house", event.target.value)}
+          >
+            <option value="">All houses</option>
+            {houses.map((option) => (
+              <option key={option} value={option}>
+                {option} only
+              </option>
+            ))}
           </Select>
         </Field>
 

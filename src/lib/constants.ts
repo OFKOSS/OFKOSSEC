@@ -51,3 +51,14 @@ export const CLASS_OPTIONS = [
   "2V",
 ];
 
+/**
+ * The school's house list, the same idea as CLASS_OPTIONS. Houses are the
+ * boarding houses a student belongs to, and a ballot can be opened to one house
+ * only — a house prefect is chosen by that house (migration 019).
+ *
+ * Officers manage the live list in the database (public.houses) and rename the
+ * placeholders there. This array is the seed for that table and the fallback
+ * when the list cannot be read — see src/hooks/useHouses.ts.
+ */
+export const HOUSE_OPTIONS = ["House 1", "House 2", "House 3", "House 4"];
+

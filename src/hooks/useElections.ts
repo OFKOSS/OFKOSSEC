@@ -52,6 +52,19 @@ export function isGenderBlocked(
   return election.eligible_gender !== "any" && gender !== election.eligible_gender;
 }
 
+/**
+ * The house rule from migration 019, the same shape as the gender rule: an
+ * election open to one house only is closed to everybody else, and a voter with
+ * no house on the register counts as ineligible rather than as a wildcard.
+ * `null` on the election means every house may vote.
+ */
+export function isHouseBlocked(
+  election: Pick<Election, "eligible_house">,
+  house: string | null,
+): boolean {
+  return Boolean(election.eligible_house) && election.eligible_house !== house;
+}
+
 /** All elections, with candidate counts and whether the current user has voted. */
 export function useElections() {
   const userId = useAuthStore((state) => state.session?.user.id ?? null);
@@ -115,23 +128,26 @@ export function useElections() {
 export async function fetchRemainingOpenElections(excludeId?: string): Promise<Election[]> {
   const userId = useAuthStore.getState().session?.user.id;
 
-  // The profile is read from the store, but this runs the moment a ballot is
+  // The register is read from the store, but this runs the moment a ballot is
   // cast — possibly before the profile has loaded. A profile that has not
-  // arrived is not the same as a voter with no gender on the register: assuming
-  // the latter marks every restricted ballot as blocked, leaves the walk with
-  // nothing to offer and drops the student on the ballot sheet instead of their
-  // next contest. So when the store has no profile, ask the register directly.
+  // arrived is not the same as a voter with no gender or house on the register:
+  // assuming the latter marks every restricted ballot as blocked, leaves the
+  // walk with nothing to offer and drops the student on the ballot sheet
+  // instead of their next contest. So when the store has no profile, ask the
+  // register directly.
   let gender = useAuthStore.getState().profile?.gender ?? null;
+  let house = useAuthStore.getState().profile?.house ?? null;
   if (!useAuthStore.getState().profile && userId) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("gender")
+      .select("gender, house")
       .eq("id", userId)
       .maybeSingle();
     if (error) {
-      console.error("Could not load your gender for the next ballot", error.message);
+      console.error("Could not load your gender and house for the next ballot", error.message);
     }
     gender = (data?.gender as Gender | null) ?? null;
+    house = (data?.house as string | null) ?? null;
   }
 
   const [electionsRes, receiptsRes] = await Promise.all([
@@ -154,12 +170,13 @@ export async function fetchRemainingOpenElections(excludeId?: string): Promise<E
   const skipped = readSkipped();
 
   // Every open ballot this voter may still cast: not the one they are on, not
-  // one they have already voted in, and not one closed to their gender.
+  // one they have already voted in, and not one closed to their gender or house.
   const openToMe = ((electionsRes.data ?? []) as Election[]).filter(
     (election) =>
       election.id !== excludeId &&
       !voted.has(election.id) &&
-      !isGenderBlocked(election, gender),
+      !isGenderBlocked(election, gender) &&
+      !isHouseBlocked(election, house),
   );
 
   // Ballots the voter has already passed over come last, but they are still

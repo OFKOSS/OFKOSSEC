@@ -5,7 +5,7 @@ import { AppShell, PageHeading } from "@/components/layout/AppShell";
 import { ElectionCard } from "@/components/elections/ElectionCard";
 import { buttonClasses } from "@/components/ui/Button";
 import { Alert, EmptyState, PageLoader } from "@/components/ui/Feedback";
-import { isGenderBlocked, useElections } from "@/hooks/useElections";
+import { isGenderBlocked, isHouseBlocked, useElections } from "@/hooks/useElections";
 import { useAuthStore, useIsAdmin } from "@/store/authStore";
 import { cn } from "@/lib/utils";
 import type { ElectionStatus, ElectionSummary, Gender } from "@/types";
@@ -29,36 +29,38 @@ function hasCastBallot(election: ElectionSummary, isAdmin: boolean): boolean {
 }
 
 /**
- * A live ballot tied to one gender is withheld from a signed-in student of the
- * other gender (migration 017) — they are walked on to their next ballot
- * instead. Officers still see every contest, and closed elections stay listed so
- * their published results remain reachable.
+ * A live ballot tied to one gender (migration 017) or one house (migration 019)
+ * is withheld from a signed-in student who does not match — they are walked on
+ * to their next ballot instead. Officers still see every contest, and closed
+ * elections stay listed so their published results remain reachable.
  */
-function withheldByGender(
+function withheldByRestriction(
   election: ElectionSummary,
   isAdmin: boolean,
   signedIn: boolean,
   gender: Gender | null,
+  house: string | null,
 ): boolean {
   if (isAdmin || !signedIn || election.status !== "active") return false;
-  return isGenderBlocked(election, gender);
+  return isGenderBlocked(election, gender) || isHouseBlocked(election, house);
 }
 
 export default function Elections() {
   const { elections, loading, error, reload } = useElections();
   const session = useAuthStore((state) => state.session);
   const profileGender = useAuthStore((state) => state.profile?.gender ?? null);
+  const profileHouse = useAuthStore((state) => state.profile?.house ?? null);
   const isAdmin = useIsAdmin();
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
 
   // A contest is hidden from the sheet when the student has already voted in it,
-  // or when it is a live ballot their gender may not vote in.
+  // or when it is a live ballot their gender or house may not vote in.
   const withheld = useCallback(
     (election: ElectionSummary) =>
       hasCastBallot(election, isAdmin) ||
-      withheldByGender(election, isAdmin, Boolean(session), profileGender),
-    [isAdmin, session, profileGender],
+      withheldByRestriction(election, isAdmin, Boolean(session), profileGender, profileHouse),
+    [isAdmin, session, profileGender, profileHouse],
   );
 
   const visible = useMemo(() => {

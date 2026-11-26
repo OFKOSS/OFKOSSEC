@@ -1,4 +1,4 @@
-import { CLASS_OPTIONS } from "@/lib/constants";
+import { CLASS_OPTIONS, HOUSE_OPTIONS } from "@/lib/constants";
 import { percent, statusLabel } from "@/utils/format";
 import type { ElectionResultRow, ElectionStatus } from "@/types";
 
@@ -18,12 +18,12 @@ export const SPREADSHEET_ACCEPT = ".xlsx,.xls,.csv,text/csv";
 
 const TEMPLATE_SHEET = "Voters";
 
-/** index number, class, full name, gender — the columns the importer expects. */
+/** index number, class, full name, gender, house — the columns the importer expects. */
 const TEMPLATE_ROWS: string[][] = [
-  ["Index number", "Class", "Full name", "Gender"],
-  ["005017200924", CLASS_OPTIONS[0], "Ama Serwaa", "female"],
-  ["005017200925", CLASS_OPTIONS[1], "Kwabena Mensah", "male"],
-  ["005017200926", CLASS_OPTIONS[9], "", ""],
+  ["Index number", "Class", "Full name", "Gender", "House"],
+  ["005017200924", CLASS_OPTIONS[0], "Ama Serwaa", "female", HOUSE_OPTIONS[0]],
+  ["005017200925", CLASS_OPTIONS[1], "Kwabena Mensah", "male", HOUSE_OPTIONS[1]],
+  ["005017200926", CLASS_OPTIONS[9], "", "", ""],
 ];
 
 function saveBlob(blob: Blob, filename: string) {
@@ -41,7 +41,7 @@ function saveBlob(blob: Blob, filename: string) {
 export async function downloadVoterTemplateXlsx(): Promise<void> {
   const XLSX = await import("xlsx");
   const sheet = XLSX.utils.aoa_to_sheet(TEMPLATE_ROWS);
-  sheet["!cols"] = [{ wch: 22 }, { wch: 24 }, { wch: 30 }, { wch: 12 }];
+  sheet["!cols"] = [{ wch: 22 }, { wch: 24 }, { wch: 30 }, { wch: 12 }, { wch: 16 }];
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, TEMPLATE_SHEET);
