@@ -20,6 +20,10 @@
 -- written to the audit trail: "who cleared the ballots" is exactly the question
 -- the log exists to answer.
 --
+-- Requires migration 016: every reset writes a row to public.audit_log, so with
+-- that table missing the whole reset is refused rather than clearing ballots
+-- quietly.
+--
 -- Idempotent: safe to run more than once.
 -- ============================================================================
 
