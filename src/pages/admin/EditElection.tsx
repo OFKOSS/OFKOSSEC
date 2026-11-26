@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, BarChart3, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BarChart3, RotateCcw, Trash2 } from "lucide-react";
 import { AppShell, PageHeading } from "@/components/layout/AppShell";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { Alert, EmptyState, PageLoader } from "@/components/ui/Feedback";
@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ElectionForm } from "@/components/admin/ElectionForm";
 import { CandidateManager } from "@/components/admin/CandidateManager";
 import { supabase } from "@/lib/supabase";
+import { pluralise } from "@/utils/format";
 import type { Election, ElectionDraft } from "@/types";
 
 export default function EditElection() {
@@ -22,6 +23,11 @@ export default function EditElection() {
   const [saved, setSaved] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  /** Ballots waiting to be cleared, counted when the confirmation opens. */
+  const [ballotCount, setBallotCount] = useState<number | null>(null);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -78,6 +84,46 @@ export default function EditElection() {
     await load();
   };
 
+  // Clearing the ballots is what lets the same election be run again for real.
+  // The count is read first so the officer confirms against a real number.
+  const openReset = async () => {
+    if (!id) return;
+    setError(null);
+    setResetNotice(null);
+    setBallotCount(null);
+    setResetOpen(true);
+
+    const { count } = await supabase
+      .from("ballot_receipts")
+      .select("voter_id", { count: "exact", head: true })
+      .eq("election_id", id);
+    setBallotCount(count ?? 0);
+  };
+
+  const resetBallots = async () => {
+    if (!id) return;
+    setResetting(true);
+    setError(null);
+
+    // Officers may not delete ballots directly; the register is cleared by an
+    // officer-only function that also writes to the audit trail.
+    const { data, error: resetError } = await supabase.rpc("admin_reset_election_ballots", {
+      p_election_id: id,
+    });
+
+    setResetting(false);
+    setResetOpen(false);
+
+    if (resetError) {
+      setError(resetError.message);
+      return;
+    }
+
+    setResetNotice(
+      `${pluralise(Number(data) || 0, "ballot")} cleared. Every student can vote in this election again.`,
+    );
+  };
+
   const deleteElection = async () => {
     if (!id) return;
     setDeleting(true);
@@ -97,6 +143,15 @@ export default function EditElection() {
 
     navigate("/admin", { replace: true });
   };
+
+  // The confirmation leads with the count, so it can only be finished once the
+  // count is in and there is something to clear.
+  const resetSummary =
+    ballotCount === null
+      ? "Counting the ballots already cast…"
+      : ballotCount === 0
+        ? "No ballots have been cast in this election yet."
+        : null;
 
   if (loading) {
     return (
@@ -190,6 +245,33 @@ export default function EditElection() {
           <CandidateManager electionId={election.id} />
         </section>
 
+        <section className="mt-12 border-t border-outline-variant pt-10">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="max-w-2xl">
+              <h2 className="text-xl font-normal text-on-surface">Clear the votes cast</h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                Removes every ballot cast in this election and lets students vote in it again. The
+                election, its candidates and the register are kept as they are — for clearing a trial
+                run before the real poll.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="md"
+              onClick={() => void openReset()}
+              icon={<RotateCcw className="h-4 w-4" strokeWidth={2.4} />}
+            >
+              Reset votes
+            </Button>
+          </div>
+
+          {resetNotice && (
+            <div className="mt-5">
+              <Alert tone="success">{resetNotice}</Alert>
+            </div>
+          )}
+        </section>
+
         <section className="mt-12 border-t border-dashed border-outline-variant pt-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -209,6 +291,44 @@ export default function EditElection() {
           </div>
         </section>
       </div>
+
+      <Modal
+        open={resetOpen}
+        title="Clear the votes cast?"
+        onClose={() => (resetting ? undefined : setResetOpen(false))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setResetOpen(false)}
+              disabled={resetting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void resetBallots()}
+              disabled={resetting || ballotCount === 0}
+            >
+              {resetting ? "Clearing…" : "Yes, clear the votes"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-on-surface-variant">
+          {resetSummary ?? (
+            <>
+              {pluralise(ballotCount ?? 0, "ballot")} will be deleted from{" "}
+              <strong className="text-on-surface">{election.title}</strong>.
+            </>
+          )}
+        </p>
+        <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+          Only the ballots go: the election, its candidates and the register stay exactly as they are,
+          and every student can vote in it again. Nothing brings the cleared ballots back.
+        </p>
+      </Modal>
 
       <Modal
         open={deleteOpen}

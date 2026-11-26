@@ -30,7 +30,12 @@ const ENTITY_META: Record<string, { noun: string; icon: LucideIcon }> = {
   candidate: { noun: "candidate", icon: UserRound },
 };
 
-const VERB: Record<string, string> = { create: "Added", update: "Updated", delete: "Removed" };
+const VERB: Record<string, string> = {
+  create: "Added",
+  update: "Updated",
+  delete: "Removed",
+  reset: "Reset",
+};
 
 interface AuditGroup {
   key: string;

@@ -4,12 +4,15 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle2,
+  Download,
   Eye,
   EyeOff,
   FileStack,
   Lock,
   Pencil,
   Plus,
+  Printer,
+  RotateCcw,
   ScrollText,
   UserPlus,
   Users,
@@ -18,11 +21,17 @@ import {
 import { AppShell, PageHeading } from "@/components/layout/AppShell";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { Alert, PageLoader } from "@/components/ui/Feedback";
+import { Modal } from "@/components/ui/Modal";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { StatTile } from "@/components/admin/StatTile";
 import { supabase } from "@/lib/supabase";
+import {
+  downloadResultsSummaryXlsx,
+  printResultsSummary,
+  type ResultsSummarySection,
+} from "@/lib/spreadsheet";
 import { describeDeadline, pluralise } from "@/utils/format";
-import type { Election, ElectionStatus } from "@/types";
+import type { Election, ElectionResultRow, ElectionStatus } from "@/types";
 
 interface OverviewRow extends Election {
   candidateCount: number;
@@ -34,6 +43,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +97,88 @@ export default function AdminDashboard() {
       ballots: rows.reduce((sum, row) => sum + row.voteCount, 0),
     };
   }, [rows]);
+
+  /**
+   * Every election's tally, assembled for the summary export. Turnout comes from
+   * the same RPC the results screens use, so the figures agree everywhere.
+   */
+  const buildSummarySections = useCallback(async (): Promise<ResultsSummarySection[]> => {
+    return Promise.all(
+      rows.map(async (election) => {
+        const [tallyRes, turnoutRes] = await Promise.all([
+          supabase.rpc("get_election_results", { p_election_id: election.id }),
+          supabase.rpc("get_election_turnout", { p_election_id: election.id }),
+        ]);
+        if (tallyRes.error) throw new Error(`${election.title}: ${tallyRes.error.message}`);
+        if (turnoutRes.error) throw new Error(`${election.title}: ${turnoutRes.error.message}`);
+
+        const turnout = Array.isArray(turnoutRes.data) ? turnoutRes.data[0] : null;
+        return {
+          meta: {
+            title: election.title,
+            position: election.position,
+            status: election.status,
+            voted: Number(turnout?.voted ?? election.voteCount),
+            eligible: Number(turnout?.eligible ?? 0),
+          },
+          rows: (tallyRes.data as ElectionResultRow[]) ?? [],
+        };
+      }),
+    );
+  }, [rows]);
+
+  const downloadSummary = async () => {
+    setReporting(true);
+    setReportError(null);
+    try {
+      await downloadResultsSummaryXlsx(await buildSummarySections());
+    } catch (thrown) {
+      setReportError(
+        thrown instanceof Error ? thrown.message : "Could not build the results summary.",
+      );
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  const printSummary = async () => {
+    setReporting(true);
+    setReportError(null);
+    try {
+      const opened = printResultsSummary(await buildSummarySections());
+      if (!opened) {
+        setReportError(
+          "Your browser blocked the print window. Allow pop-ups for this site, then try again.",
+        );
+      }
+    } catch (thrown) {
+      setReportError(
+        thrown instanceof Error ? thrown.message : "Could not build the results summary.",
+      );
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  const resetAllBallots = async () => {
+    setResetting(true);
+    setError(null);
+    setResetNotice(null);
+    const { data, error: resetError } = await supabase.rpc("admin_reset_all_ballots");
+    setResetting(false);
+    setResetOpen(false);
+    if (resetError) {
+      setError(resetError.message);
+      return;
+    }
+    setResetNotice(
+      `${pluralise(Number(data) || 0, "ballot")} cleared across ${pluralise(
+        rows.length,
+        "election",
+      )}. Every student can vote again from a clean sheet.`,
+    );
+    await load();
+  };
 
   const updateElection = async (id: string, patch: Partial<Election>) => {
     setBusyId(id);
@@ -159,6 +255,74 @@ export default function AdminDashboard() {
             <Alert>{error}</Alert>
           </div>
         )}
+
+        {resetNotice && (
+          <div className="mt-6">
+            <Alert tone="success">{resetNotice}</Alert>
+          </div>
+        )}
+
+        {reportError && (
+          <div className="mt-6">
+            <Alert>{reportError}</Alert>
+          </div>
+        )}
+
+        <section className="mt-10 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-2xl border border-outline-variant bg-surface-container-low p-6 shadow-elev-1">
+            <h2 className="text-xl font-normal text-on-surface">Results summary</h2>
+            <p className="mt-1 text-sm text-on-surface-variant">
+              Every election in one document: turnout, the winner and the full tally behind it.
+              Download it as a workbook, or print it — the print view is laid out for A4, so it saves
+              straight to PDF.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                variant="ink"
+                size="md"
+                onClick={() => void downloadSummary()}
+                disabled={reporting || rows.length === 0}
+                icon={<Download className="h-4 w-4" strokeWidth={2.4} />}
+              >
+                {reporting ? "Preparing…" : "Download summary"}
+              </Button>
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => void printSummary()}
+                disabled={reporting || rows.length === 0}
+                icon={<Printer className="h-4 w-4" strokeWidth={2.4} />}
+              >
+                Print / save as PDF
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-outline-variant bg-surface-container-low p-6 shadow-elev-1">
+            <h2 className="text-xl font-normal text-on-surface">Clear every vote cast</h2>
+            <p className="mt-1 text-sm text-on-surface-variant">
+              Wipes the ballots from every election at once — the quickest way to clear a rehearsal
+              before the real poll. Elections, candidates and the register are left alone, and a
+              single election can be cleared on its own from Manage.
+            </p>
+            <div className="mt-5">
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => setResetOpen(true)}
+                disabled={stats.ballots === 0}
+                icon={<RotateCcw className="h-4 w-4" strokeWidth={2.4} />}
+              >
+                Reset all votes
+              </Button>
+            </div>
+            {stats.ballots === 0 && (
+              <p className="mt-3 text-xs text-on-surface-variant">
+                There are no ballots to clear right now.
+              </p>
+            )}
+          </div>
+        </section>
 
         <section className="mt-10">
           <div className="mb-5 flex items-end justify-between gap-4 border-b border-outline-variant pb-4">
@@ -305,6 +469,40 @@ export default function AdminDashboard() {
           )}
         </section>
       </div>
+
+      <Modal
+        open={resetOpen}
+        title="Clear every vote cast?"
+        onClose={() => (resetting ? undefined : setResetOpen(false))}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              className="border border-outline-variant"
+              onClick={() => setResetOpen(false)}
+              disabled={resetting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void resetAllBallots()}
+              disabled={resetting || stats.ballots === 0}
+            >
+              {resetting ? "Clearing…" : "Yes, clear every ballot"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-on-surface-variant">
+          {pluralise(stats.ballots, "ballot")} across {pluralise(rows.length, "election")} will be
+          deleted. For a single election instead, clear it from that election&apos;s Manage page.
+        </p>
+        <p className="mt-4 border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">
+          Only the ballots go: the elections, their candidates and the register stay exactly as they
+          are, and every student can vote again. Nothing brings the cleared ballots back.
+        </p>
+      </Modal>
     </AppShell>
   );
 }
