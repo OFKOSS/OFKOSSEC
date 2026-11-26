@@ -98,7 +98,7 @@ export default function ElectionDetail() {
   useEffect(() => {
     if (!justVoted || findingNext) return;
     const target = nextElection ? `/elections/${nextElection.id}` : "/elections";
-    const timer = window.setTimeout(() => navigate(target, { replace: true }), 4000);
+    const timer = window.setTimeout(() => navigate(target, { replace: true }), 2000);
     return () => window.clearTimeout(timer);
   }, [justVoted, findingNext, nextElection, navigate]);
 
