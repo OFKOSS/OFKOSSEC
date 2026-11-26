@@ -44,6 +44,12 @@ export function ElectionCard({ election }: { election: ElectionSummary }) {
             <CalendarClock className="h-3.5 w-3.5" strokeWidth={2.2} />
             {describeDeadline(election)}
           </span>
+          {election.eligible_gender !== "any" && (
+            <span className="inline-flex items-center gap-1.5 text-primary">
+              <Users className="h-3.5 w-3.5" strokeWidth={2.2} />
+              Open to {election.eligible_gender} students only
+            </span>
+          )}
           {election.hasVoted && (
             <span className="inline-flex items-center gap-1.5 text-tertiary">
               <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.4} />

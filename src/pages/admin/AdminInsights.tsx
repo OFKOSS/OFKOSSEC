@@ -17,17 +17,25 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { supabase } from "@/lib/supabase";
 import { percent, pluralise } from "@/utils/format";
 import { cn } from "@/lib/utils";
-import type { Election } from "@/types";
+import type { Election, Gender } from "@/types";
 
 interface InsightRow extends Election {
   candidateCount: number;
   voteCount: number;
 }
 
+/** Registered voters, split so a gender-restricted contest can be measured
+ *  against the students who could actually vote in it. */
+interface Register {
+  all: number;
+  male: number;
+  female: number;
+}
+
 /** Officer-only roll-up of turnout across every election on the register. */
 export default function AdminInsights() {
   const [rows, setRows] = useState<InsightRow[]>([]);
-  const [eligible, setEligible] = useState(0);
+  const [register, setRegister] = useState<Register>({ all: 0, male: 0, female: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,16 +43,18 @@ export default function AdminInsights() {
     setLoading(true);
     setError(null);
 
-    const [electionsRes, candidatesRes, votesRes, studentsRes] = await Promise.all([
+    const [electionsRes, candidatesRes, votesRes, registerRes] = await Promise.all([
       supabase.from("elections").select("*").order("created_at", { ascending: false }),
       supabase.from("candidates").select("id, election_id"),
       supabase.from("votes").select("election_id"),
       // Same register definition the turnout RPC uses: an account is not a
       // voter. Without the student_id filter a stray sign-up would be counted
-      // as eligible on this screen while the results screen ignored it.
+      // as eligible on this screen while the results screen ignored it. Gender
+      // comes along so a restricted election is measured against matching
+      // students, exactly as get_election_turnout does (migration 017).
       supabase
         .from("profiles")
-        .select("id", { count: "exact", head: true })
+        .select("gender")
         .eq("role", "student")
         .not("student_id", "is", null),
     ]);
@@ -65,6 +75,13 @@ export default function AdminInsights() {
       voteCounts.set(row.election_id, (voteCounts.get(row.election_id) ?? 0) + 1);
     }
 
+    const next: Register = { all: 0, male: 0, female: 0 };
+    for (const row of (registerRes.data ?? []) as { gender: Gender | null }[]) {
+      next.all += 1;
+      if (row.gender === "male") next.male += 1;
+      else if (row.gender === "female") next.female += 1;
+    }
+
     setRows(
       (electionsRes.data as Election[]).map((election) => ({
         ...election,
@@ -72,7 +89,7 @@ export default function AdminInsights() {
         voteCount: voteCounts.get(election.id) ?? 0,
       })),
     );
-    setEligible(studentsRes.count ?? 0);
+    setRegister(next);
     setLoading(false);
   }, []);
 
@@ -80,19 +97,35 @@ export default function AdminInsights() {
     void load();
   }, [load]);
 
+  /** Students who could actually vote in a given election — the whole
+   *  register for an open contest, the matching gender for a restricted one. */
+  const eligibleFor = useCallback(
+    (election: Election) =>
+      election.eligible_gender === "any"
+        ? register.all
+        : election.eligible_gender === "male"
+          ? register.male
+          : register.female,
+    [register],
+  );
+
   const stats = useMemo(() => {
     const ballots = rows.reduce((sum, row) => sum + row.voteCount, 0);
     const live = rows.filter((row) => row.status === "active").length;
-    const counting = rows.filter((row) => row.status !== "draft").length;
+    const counted = rows.filter((row) => row.status !== "draft");
     return {
       ballots,
       live,
-      counting,
+      counting: counted.length,
       candidates: rows.reduce((sum, row) => sum + row.candidateCount, 0),
-      // Every counted election offered one ballot per registered student.
-      turnout: percent(ballots, eligible * counting),
+      // Sum the per-election eligible pools so a restricted contest does not
+      // inflate the denominator with students who could never vote in it.
+      turnout: percent(
+        ballots,
+        counted.reduce((sum, row) => sum + eligibleFor(row), 0),
+      ),
     };
-  }, [rows, eligible]);
+  }, [rows, eligibleFor]);
 
   const busiest = rows.length ? Math.max(...rows.map((row) => row.voteCount), 1) : 1;
 
@@ -132,7 +165,7 @@ export default function AdminInsights() {
           />
           <StatTile
             label="Registered students"
-            value={eligible}
+            value={register.all}
             hint="Eligible voters on the register"
             icon={<Users className="h-4 w-4" strokeWidth={2.2} />}
             accent="mustard"
@@ -187,7 +220,7 @@ export default function AdminInsights() {
           ) : (
             <ul className="flex flex-col gap-4">
               {rows.map((election) => {
-                const turnout = percent(election.voteCount, eligible);
+                const turnout = percent(election.voteCount, eligibleFor(election));
                 const width = Math.round((election.voteCount / busiest) * 100);
                 return (
                   <li
