@@ -114,6 +114,10 @@ export default function AdminDashboard() {
                 <UserPlus className="h-4 w-4" strokeWidth={2.6} />
                 Voter register
               </Link>
+              <Link to="/admin/audit" className={buttonClasses("outline", "lg")}>
+                <ScrollText className="h-4 w-4" strokeWidth={2.6} />
+                Audit trail
+              </Link>
               <Link to="/admin/elections/new" className={buttonClasses("primary", "lg")}>
                 <Plus className="h-4 w-4" strokeWidth={2.6} />
                 New election

@@ -18,6 +18,7 @@ import NewElection from "@/pages/admin/NewElection";
 import EditElection from "@/pages/admin/EditElection";
 import AdminResults from "@/pages/admin/AdminResults";
 import AdminVoters from "@/pages/admin/AdminVoters";
+import AdminAudit from "@/pages/admin/AdminAudit";
 
 /** Reset scroll position whenever the route changes. */
 function ScrollToTop() {
@@ -73,6 +74,14 @@ export default function App() {
           element={
             <RequireAdmin>
               <AdminInsights />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/audit"
+          element={
+            <RequireAdmin>
+              <AdminAudit />
             </RequireAdmin>
           }
         />
