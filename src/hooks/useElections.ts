@@ -114,7 +114,25 @@ export function useElections() {
  */
 export async function fetchRemainingOpenElections(excludeId?: string): Promise<Election[]> {
   const userId = useAuthStore.getState().session?.user.id;
-  const gender = useAuthStore.getState().profile?.gender ?? null;
+
+  // The profile is read from the store, but this runs the moment a ballot is
+  // cast — possibly before the profile has loaded. A profile that has not
+  // arrived is not the same as a voter with no gender on the register: assuming
+  // the latter marks every restricted ballot as blocked, leaves the walk with
+  // nothing to offer and drops the student on the ballot sheet instead of their
+  // next contest. So when the store has no profile, ask the register directly.
+  let gender = useAuthStore.getState().profile?.gender ?? null;
+  if (!useAuthStore.getState().profile && userId) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("gender")
+      .eq("id", userId)
+      .maybeSingle();
+    if (error) {
+      console.error("Could not load your gender for the next ballot", error.message);
+    }
+    gender = (data?.gender as Gender | null) ?? null;
+  }
 
   const [electionsRes, receiptsRes] = await Promise.all([
     supabase

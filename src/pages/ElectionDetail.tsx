@@ -34,7 +34,9 @@ export default function ElectionDetail() {
 
   const session = useAuthStore((state) => state.session);
   const userId = session?.user.id ?? null;
-  const profileGender = useAuthStore((state) => state.profile?.gender ?? null);
+  const profile = useAuthStore((state) => state.profile);
+  const profileLoading = useAuthStore((state) => state.profileLoading);
+  const profileGender = profile?.gender ?? null;
   const isAdmin = useIsAdmin();
 
   // "My ballot" links here with ?edit=1 to say "open this ballot for changing".
@@ -70,10 +72,16 @@ export default function ElectionDetail() {
     election && election.eligible_gender !== "any" ? election.eligible_gender : null;
   const eligible = !restrictedGender || profileGender === restrictedGender;
 
+  // The rule can only be applied once the register has been read. A profile that
+  // is still loading is not a voter without a gender — judging it as one would
+  // send a student away from a ballot they are entitled to vote in (the same
+  // reason RequireAdmin waits before it decides).
+  const genderKnown = Boolean(profile) || !profileLoading;
+
   // A signed-in student who may not vote here is walked on to their next ballot
   // rather than left on a page that could only reject them. Officers keep full
   // access, so they can still preview every ballot.
-  const blocked = Boolean(session) && !isAdmin && isLive && !eligible;
+  const blocked = Boolean(session) && !isAdmin && isLive && genderKnown && !eligible;
 
   useEffect(() => {
     setSelectedId(null);
@@ -390,7 +398,7 @@ export default function ElectionDetail() {
           </div>
         )}
 
-        {isLive && !eligible && !locked && (
+        {isLive && genderKnown && !eligible && !locked && (
           <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-outline-variant bg-surface-container px-4 py-3.5 text-sm text-on-surface-variant">
             <Users className="mt-0.5 h-4 w-4 shrink-0 text-primary" strokeWidth={2.2} />
             <p>
