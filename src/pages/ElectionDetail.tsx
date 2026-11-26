@@ -34,6 +34,7 @@ export default function ElectionDetail() {
 
   const session = useAuthStore((state) => state.session);
   const userId = session?.user.id ?? null;
+  const profileGender = useAuthStore((state) => state.profile?.gender ?? null);
 
   // "My ballot" links here with ?edit=1 to say "open this ballot for changing".
   const wantsEdit = searchParams.get("edit") === "1";
@@ -61,6 +62,13 @@ export default function ElectionDetail() {
   const resultsAvailable =
     election?.status === "closed" && Boolean(election?.results_public);
 
+  // Some elections are open to one gender only (migration 017). The database
+  // enforces this; the page mirrors it so a student who may not vote is told
+  // why rather than being handed a ballot that would be rejected on submit.
+  const restrictedGender =
+    election && election.eligible_gender !== "any" ? election.eligible_gender : null;
+  const eligible = !restrictedGender || profileGender === restrictedGender;
+
   useEffect(() => {
     setSelectedId(null);
     setJustVoted(false);
@@ -81,7 +89,7 @@ export default function ElectionDetail() {
   }, [justVoted, findingNext, nextElection, navigate]);
 
   const castVote = async () => {
-    if (!election || !selectedId || !userId) return;
+    if (!election || !selectedId || !userId || !eligible) return;
 
     setSubmitting(true);
     setCastError(null);
@@ -235,6 +243,12 @@ export default function ElectionDetail() {
             {election.ends_at && (
               <span>Closes {formatDateTime(election.ends_at)}</span>
             )}
+            {restrictedGender && (
+              <span className="inline-flex items-center gap-1.5 text-primary">
+                <Users className="h-4 w-4" strokeWidth={2.2} />
+                Open to {restrictedGender} students only
+              </span>
+            )}
           </div>
         </header>
 
@@ -333,12 +347,26 @@ export default function ElectionDetail() {
           </div>
         )}
 
-        {isLive && !locked && !editing && (
+        {isLive && !locked && !editing && eligible && (
           <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary/50 bg-tertiary-container/40 px-4 py-3 text-sm text-on-tertiary-container">
             <Lock className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.2} />
             <p>
               Your choice is anonymous. Pick one candidate below, then confirm on the bar at the bottom of
               the screen.
+            </p>
+          </div>
+        )}
+
+        {isLive && !eligible && !locked && (
+          <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-outline-variant bg-surface-container px-4 py-3.5 text-sm text-on-surface-variant">
+            <Users className="mt-0.5 h-4 w-4 shrink-0 text-primary" strokeWidth={2.2} />
+            <p>
+              <span className="font-medium text-on-surface">
+                This ballot is open to {restrictedGender} students only.
+              </span>{" "}
+              {profileGender
+                ? "Your record is on the register as a different gender, so you cannot vote in this election."
+                : "Your gender is not recorded on the register yet, so you cannot vote in this election. Ask an Electoral Officer to set it if this is wrong."}
             </p>
           </div>
         )}
@@ -353,7 +381,7 @@ export default function ElectionDetail() {
               key={candidate.id}
               candidate={candidate}
               selected={selectedId === candidate.id}
-              disabled={!isLive || locked}
+              disabled={!isLive || locked || !eligible}
               onSelect={setSelectedId}
             />
           ))}
@@ -394,7 +422,7 @@ export default function ElectionDetail() {
       <BallotBar
         electionTitle={election.title}
         selectedName={selectedCandidate?.name ?? null}
-        isLive={isLive}
+        isLive={isLive && eligible}
         hasVoted={locked}
         editing={editing}
         isSignedIn={Boolean(session)}

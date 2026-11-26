@@ -2,12 +2,19 @@ export type Role = "student" | "admin";
 
 export type ElectionStatus = "draft" | "active" | "closed";
 
+/** A voter's gender, or null when the officer has not recorded one yet. */
+export type Gender = "male" | "female";
+
+/** Who may cast a ballot in an election. "any" is the unrestricted default. */
+export type EligibleGender = "any" | Gender;
+
 export interface Profile {
   id: string;
   full_name: string;
   student_id: string | null;
   class_name: string | null;
   role: Role;
+  gender: Gender | null;
   avatar_url: string | null;
   created_at: string;
 }
@@ -19,6 +26,8 @@ export interface Election {
   description: string | null;
   status: ElectionStatus;
   results_public: boolean;
+  /** "any" unless the ballot is restricted to one gender (migration 017). */
+  eligible_gender: EligibleGender;
   starts_at: string | null;
   ends_at: string | null;
   created_by: string | null;
@@ -91,6 +100,25 @@ export interface ElectionDraft {
   description: string;
   status: ElectionStatus;
   results_public: boolean;
+  eligible_gender: EligibleGender;
   starts_at: string;
   ends_at: string;
+}
+
+/** One row of the officer audit trail (public.audit_log, migration 016). */
+export interface AuditLogEntry {
+  id: number;
+  created_at: string;
+  actor_id: string | null;
+  /** The officer's index number or name, or "system" for unattributed writes. */
+  actor_label: string;
+  /** "<entity>.<verb>" — for example "voter.update" or "class.create". */
+  action: string;
+  /** voter | class | election | candidate */
+  entity: string;
+  entity_id: string | null;
+  /** How the affected row is named in a sentence. */
+  label: string;
+  /** Column changes as {field: {from, to}}, or {removed: <row>} on a delete. */
+  details: Record<string, unknown> | null;
 }

@@ -37,7 +37,7 @@ import {
 } from "@/lib/spreadsheet";
 import { cn } from "@/lib/utils";
 import { formatDate, pluralise } from "@/utils/format";
-import type { Profile } from "@/types";
+import type { Gender, Profile } from "@/types";
 
 interface BulkProblem {
   line: number;
@@ -49,7 +49,19 @@ interface BulkRow {
   index: string;
   className: string;
   name: string;
+  gender: Gender | null;
 }
+
+/** Normalise a free-text gender cell to the two values the register accepts. */
+function parseGender(value: string): Gender | null | "invalid" {
+  const text = value.trim().toLowerCase();
+  if (!text) return null;
+  if (text === "m" || text === "male" || text === "boy" || text === "boys") return "male";
+  if (text === "f" || text === "female" || text === "girl" || text === "girls") return "female";
+  return "invalid";
+}
+
+const GENDER_LABEL: Record<Gender, string> = { male: "Male", female: "Female" };
 
 /** Split one pasted row and tidy up Excel's padding and quotes. */
 function splitRow(line: string): string[] {
@@ -59,7 +71,7 @@ function splitRow(line: string): string[] {
 
 /**
  * Validate a grid of cells — one voter per row, columns:
- * index number, class, full name (name optional).
+ * index number, class, full name (optional), gender (optional).
  * Shared by the paste box and by uploaded .xlsx / .csv files.
  * The class list comes from the database, so a renamed class validates.
  */
@@ -82,13 +94,14 @@ function parseVoterRows(
     if (index === 0 && /^(index(\s*number)?|student\s*id)$/i.test(indexNumber)) return;
 
     const className = parts[1] ?? "";
-    const fullName = parts.slice(2).join(", ").trim();
+    const fullName = parts[2] ?? "";
+    const genderCell = parts[3] ?? "";
 
     if (!indexNumber || !className) {
       problems.push({
         line: lineNo,
         text: parts.join(", "),
-        reason: "Use: index number, class, full name",
+        reason: "Use: index number, class, full name, gender",
       });
       return;
     }
@@ -109,6 +122,16 @@ function parseVoterRows(
       return;
     }
 
+    const gender = parseGender(genderCell);
+    if (gender === "invalid") {
+      problems.push({
+        line: lineNo,
+        text: parts.join(", "),
+        reason: `Unknown gender "${genderCell}" — use male or female (or leave it blank)`,
+      });
+      return;
+    }
+
     const key = normalizeIndexNumber(indexNumber);
     if (seen.has(key)) {
       problems.push({ line: lineNo, text: parts.join(", "), reason: "Duplicate of an earlier line" });
@@ -116,7 +139,7 @@ function parseVoterRows(
     }
 
     seen.add(key);
-    rows.push({ index: indexNumber, className, name: fullName });
+    rows.push({ index: indexNumber, className, name: fullName, gender });
   });
 
   return { rows, problems };
@@ -145,6 +168,7 @@ export default function AdminVoters() {
   const [indexNumber, setIndexNumber] = useState("");
   const [className, setClassName] = useState(CLASS_OPTIONS[0]);
   const [fullName, setFullName] = useState("");
+  const [gender, setGender] = useState<Gender | "">("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
@@ -167,6 +191,7 @@ export default function AdminVoters() {
   const [editIndex, setEditIndex] = useState("");
   const [editClass, setEditClass] = useState(CLASS_OPTIONS[0]);
   const [editName, setEditName] = useState("");
+  const [editGender, setEditGender] = useState<Gender | "">("");
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editNotice, setEditNotice] = useState<string | null>(null);
@@ -292,6 +317,7 @@ export default function AdminVoters() {
       p_index_number: indexNumber.trim(),
       p_class_name: className,
       p_full_name: fullName.trim() || null,
+      p_gender: gender || null,
     });
     setAdding(false);
 
@@ -305,6 +331,7 @@ export default function AdminVoters() {
     );
     setIndexNumber("");
     setFullName("");
+    setGender("");
     await load();
   };
 
@@ -325,17 +352,21 @@ export default function AdminVoters() {
     const results = await Promise.all(
       rows.map(async (row) => {
         const match = existingByIndex.get(normalizeIndexNumber(row.index));
+        // A blank gender column means "leave it alone" on an update rather than
+        // wiping a gender an officer already recorded.
         const { error } = match
           ? await supabase.rpc("admin_update_voter", {
               p_voter_id: match.id,
               p_index_number: row.index,
               p_class_name: row.className,
               p_full_name: row.name || null,
+              p_gender: row.gender ?? match.gender ?? null,
             })
           : await supabase.rpc("admin_create_voter", {
               p_index_number: row.index,
               p_class_name: row.className,
               p_full_name: row.name || null,
+              p_gender: row.gender,
             });
         return { row, updated: Boolean(match), error: error?.message ?? null };
       }),
@@ -417,6 +448,7 @@ export default function AdminVoters() {
     setEditIndex(voter.student_id ?? "");
     setEditClass(voter.class_name ?? allClasses[0] ?? CLASS_OPTIONS[0]);
     setEditName(voter.full_name);
+    setEditGender(voter.gender ?? "");
     setEditError(null);
   };
 
@@ -436,6 +468,7 @@ export default function AdminVoters() {
       p_index_number: editIndex.trim(),
       p_class_name: editClass,
       p_full_name: editName.trim() || null,
+      p_gender: editGender || null,
     });
     setEditBusy(false);
 
@@ -657,6 +690,23 @@ export default function AdminVoters() {
                 />
               </Field>
 
+              <Field
+                label="Gender"
+                htmlFor="voter-gender"
+                hint="Needed before this student can vote in a gender-restricted election."
+              >
+                <Select
+                  id="voter-gender"
+                  name="voter-gender"
+                  value={gender}
+                  onChange={(event) => setGender(event.target.value as Gender | "")}
+                >
+                  <option value="">Not recorded</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </Select>
+              </Field>
+
               <Button type="submit" size="lg" disabled={adding} className="w-full">
                 <Plus className="h-4 w-4" strokeWidth={2.6} />
                 {adding ? "Adding…" : "Add voter"}
@@ -679,7 +729,8 @@ export default function AdminVoters() {
               Fill the Excel template, then upload it here. One voter per row:{" "}
               <span className="font-mono text-xs">index number</span>,{" "}
               <span className="font-mono text-xs">class</span>,{" "}
-              <span className="font-mono text-xs">full name</span>. Re-uploading updates students
+              <span className="font-mono text-xs">full name</span>,{" "}
+              <span className="font-mono text-xs">gender</span>. Re-uploading updates students
               already on the register — it never removes anyone.
             </p>
 
@@ -745,6 +796,7 @@ export default function AdminVoters() {
                       <li key={row.index} className="font-mono">
                         {row.index} · {row.className}
                         {row.name ? ` · ${row.name}` : ""}
+                        {row.gender ? ` · ${GENDER_LABEL[row.gender]}` : ""}
                       </li>
                     ))}
                     {pendingImport.rows.length > 50 && (
@@ -809,7 +861,7 @@ export default function AdminVoters() {
                   rows={6}
                   value={bulkText}
                   onChange={(event) => setBulkText(event.target.value)}
-                  placeholder={"Index number, Class, Full name\n005017200924, 3A1, Ama Serwaa\n005017200925, 3A1, Kwabena Mensah"}
+                  placeholder={"Index number, Class, Full name, Gender\n005017200924, 3A1, Ama Serwaa, female\n005017200925, 3A1, Kwabena Mensah, male"}
                   className="font-mono text-xs"
                 />
               </Field>
@@ -1135,6 +1187,15 @@ export default function AdminVoters() {
                           <GraduationCap className="h-3.5 w-3.5" strokeWidth={2.2} />
                           {voter.class_name ?? "no class"}
                         </span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            voter.gender ? "text-on-surface-variant" : "text-primary",
+                          )}
+                        >
+                          <Users className="h-3.5 w-3.5" strokeWidth={2.2} />
+                          {voter.gender ? GENDER_LABEL[voter.gender] : "no gender"}
+                        </span>
                         <span className="text-on-surface-variant">Added {formatDate(voter.created_at)}</span>
                       </p>
                     </div>
@@ -1225,7 +1286,7 @@ export default function AdminVoters() {
               value={editClass}
               onChange={(event) => setEditClass(event.target.value)}
             >
-              {CLASS_OPTIONS.map((option) => (
+              {allClasses.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1242,6 +1303,23 @@ export default function AdminVoters() {
               placeholder="Ama Serwaa"
               maxLength={80}
             />
+          </Field>
+
+          <Field
+            label="Gender"
+            htmlFor="edit-voter-gender"
+            hint="Needed before this student can vote in a gender-restricted election."
+          >
+            <Select
+              id="edit-voter-gender"
+              name="edit-voter-gender"
+              value={editGender}
+              onChange={(event) => setEditGender(event.target.value as Gender | "")}
+            >
+              <option value="">Not recorded</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </Select>
           </Field>
 
           <p className="border-t border-dashed border-outline-variant pt-4 text-xs leading-relaxed text-on-surface-variant">

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input, Select, TextArea } from "@/components/ui/Field";
 import { Alert } from "@/components/ui/Feedback";
 import { toDateTimeLocal } from "@/utils/format";
-import type { ElectionDraft, ElectionStatus } from "@/types";
+import type { ElectionDraft, ElectionStatus, EligibleGender } from "@/types";
 
 interface ElectionFormProps {
   initial?: Partial<ElectionDraft>;
@@ -22,6 +22,7 @@ const EMPTY: ElectionDraft = {
   description: "",
   status: "draft",
   results_public: false,
+  eligible_gender: "any",
   starts_at: "",
   ends_at: "",
 };
@@ -112,7 +113,7 @@ export function ElectionForm({
         />
       </Field>
 
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
         <Field label="Status" htmlFor="status">
           <Select
             id="status"
@@ -122,6 +123,22 @@ export function ElectionForm({
             <option value="draft">Draft — hidden from students</option>
             <option value="active">Voting live</option>
             <option value="closed">Voting closed</option>
+          </Select>
+        </Field>
+
+        <Field
+          label="Who may vote"
+          htmlFor="eligible_gender"
+          hint="Restrict this ballot to one gender."
+        >
+          <Select
+            id="eligible_gender"
+            value={draft.eligible_gender}
+            onChange={(event) => set("eligible_gender", event.target.value as EligibleGender)}
+          >
+            <option value="any">All students</option>
+            <option value="male">Male students only</option>
+            <option value="female">Female students only</option>
           </Select>
         </Field>
 
