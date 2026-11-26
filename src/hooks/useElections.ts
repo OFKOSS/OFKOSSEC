@@ -153,13 +153,22 @@ export async function fetchRemainingOpenElections(excludeId?: string): Promise<E
   const voted = new Set((receiptsRes.data ?? []).map((row) => row.election_id as string));
   const skipped = readSkipped();
 
-  return ((electionsRes.data ?? []) as Election[]).filter(
+  // Every open ballot this voter may still cast: not the one they are on, not
+  // one they have already voted in, and not one closed to their gender.
+  const openToMe = ((electionsRes.data ?? []) as Election[]).filter(
     (election) =>
       election.id !== excludeId &&
       !voted.has(election.id) &&
-      !skipped.has(election.id) &&
       !isGenderBlocked(election, gender),
   );
+
+  // Ballots the voter has already passed over come last, but they are still
+  // offered when nothing else is left. A skip means "not this one now", not
+  // "never": treating it as a permanent exclusion let a few skips empty the
+  // walk, so casting or skipping the next ballot dropped the student on the
+  // ballot sheet with contests still unvoted.
+  const notYetPassed = openToMe.filter((election) => !skipped.has(election.id));
+  return notYetPassed.length > 0 ? notYetPassed : openToMe;
 }
 
 interface ElectionDetailState {
